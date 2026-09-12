@@ -1,6 +1,6 @@
 """Shelling out to ImageMagick and ffmpeg, and parsing what they say.
 
-This machine has no PIL and no exiftool, so metadata comes from `identify`
+Metadata comes from ImageMagick `identify`
 and `ffprobe`. Everything these tools print is treated as data: parsed
 defensively, never evaluated, never trusted to be present. A tool that fails
 on one file yields no facts for that file rather than aborting the ingest,
@@ -13,6 +13,7 @@ directly by tests without walking a directory or opening a database.
 from datetime import datetime
 import json
 import re
+import shutil
 import subprocess
 
 TOOL_TIMEOUT_S = 120
@@ -36,6 +37,21 @@ def kind_for(path):
     if ext in VIDEO_EXTS:
         return "video"
     return "other"
+
+
+_identify = None
+
+
+def identify_command():
+    """``['identify']`` where the legacy name exists, else ``['magick', 'identify']``.
+
+    ImageMagick 7 on Windows installs only ``magick`` unless legacy utilities
+    are ticked; Linux packages ship both names.
+    """
+    global _identify
+    if _identify is None:
+        _identify = ["identify"] if shutil.which("identify") else ["magick", "identify"]
+    return list(_identify)
 
 
 def _run(cmd, binary=False):
@@ -66,7 +82,7 @@ def tool_version(tool):
     if tool in _versions:
         return _versions[tool]
     patterns = {
-        "identify": (["identify", "-version"], r"ImageMagick ([0-9][^\s]*)"),
+        "identify": (identify_command() + ["-version"], r"ImageMagick ([0-9][^\s]*)"),
         "ffprobe": (["ffprobe", "-version"], r"ffprobe version (\S+)"),
         "ffmpeg": (["ffmpeg", "-version"], r"ffmpeg version (\S+)"),
     }
@@ -85,7 +101,7 @@ def tool_version(tool):
 
 def photo_dimensions(path):
     """(width, height) via ImageMagick. Raises ToolError if unreadable."""
-    out = _run(["identify", "-format", "%w %h", f"{path}[0]"])
+    out = _run(identify_command() + ["-format", "%w %h", f"{path}[0]"])
     parts = out.strip().split()
     if len(parts) < 2:
         raise ToolError(f"identify gave no dimensions for {path}")
@@ -102,7 +118,7 @@ def exif_properties(path):
     nothing, which is a normal answer and not an error.
     """
     try:
-        out = _run(["identify", "-format", "%[EXIF:*]", f"{path}[0]"])
+        out = _run(identify_command() + ["-format", "%[EXIF:*]", f"{path}[0]"])
     except ToolError:
         return {}
     props = {}

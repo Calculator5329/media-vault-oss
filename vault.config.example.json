@@ -1,0 +1,9 @@
+{
+  "sources": ["/absolute/path/to/your/photos"],
+  "exports": null,
+  "tier": "personal",
+  "state_dir": ".catalog",
+  "models_dir": "models",
+  "port": 8770,
+  "external_roots": null
+}

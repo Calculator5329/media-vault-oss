@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -21,10 +22,25 @@ from .vision import read_image
 RETRY_POLICY='timeout-90s-v1'
 
 
+def tessdata_english():
+    """Locate ``eng.traineddata``: ``TESSDATA_PREFIX`` first, then the usual package and installer dirs."""
+    candidates=[]
+    prefix=os.environ.get('TESSDATA_PREFIX')
+    if prefix:candidates.append(Path(prefix))
+    binary=shutil.which('tesseract')
+    if binary:candidates.append(Path(binary).resolve().parent/'tessdata')
+    candidates+=[Path('/usr/share/tessdata'),Path('/usr/share/tesseract-ocr/5/tessdata'),Path('/usr/share/tesseract-ocr/4.00/tessdata'),
+                 Path('/usr/local/share/tessdata'),Path('/opt/homebrew/share/tessdata'),Path(r'C:/Program Files/Tesseract-OCR/tessdata')]
+    for directory in candidates:
+        data=directory/'eng.traineddata'
+        if data.is_file():return data
+    raise FileNotFoundError('Tesseract English data (eng.traineddata) not found; install tesseract-data-eng or set TESSDATA_PREFIX')
+
+
 class Tesseract:
     def __init__(self):
         self.version=subprocess.run(['tesseract','--version'],capture_output=True,text=True,check=True).stdout.splitlines()[0]
-        data=Path('/usr/share/tessdata/eng.traineddata')
+        data=tessdata_english()
         self.identity='tesseract:'+hashlib.sha256(json.dumps({'version':self.version,'english_model':hashlib.sha256(data.read_bytes()).hexdigest(),'psm':11,'max_side':3200,'min_score':45,'extractor':'ocr-1'},sort_keys=True).encode()).hexdigest()
 
     def retry(self,image):

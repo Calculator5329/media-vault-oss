@@ -82,7 +82,7 @@ def inspect(path):
     if kind(path) == 'photo':
         try:
             # One metadata-only invocation. Failure is distinct from missing EXIF.
-            raw = probe._run(['identify', '-ping', '-format', '%w\n%h\n%[EXIF:*]', f'{path}[0]'])
+            raw = probe._run(probe.identify_command() + ['-ping', '-format', '%w\n%h\n%[EXIF:*]', f'{path}[0]'])
             lines = raw.splitlines()
             result['width'], result['height'] = int(lines[0]), int(lines[1])
             props = {}
