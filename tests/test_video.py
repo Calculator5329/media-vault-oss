@@ -6,15 +6,16 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
 import zipfile
-from src.video import prepare,verified_copy,byte_range,Playback,probe
+from src.video import prepare,verified_copy,byte_range,Playback,SourceUnavailable,MAX_SOURCE
+import time
 from src.server import handler
+from tests.scratch import scratch
 
 
 class VideoTests(unittest.TestCase):
     def setUp(self):
-        self.root=Path(tempfile.mkdtemp())
+        self.root=scratch()
 
     def row(self,path,raw,member='',offset=0,crc=0):
         s=path.stat()
@@ -40,6 +41,26 @@ class VideoTests(unittest.TestCase):
         playback=Playback(self.root/'cache');self.assertEqual(playback.status(row['content_hash'])['state'],'ready')
         self.assertEqual(playback.file(row['content_hash']),target)
 
+    def test_unmounted_archive_reports_disconnected_drive_not_limits(self):
+        # A 21 MB H.264 clip was once reported as beyond the local limits while its archive drive was simply not mounted.
+        missing=self.root/'unmounted-drive'/'IMG_1679.MOV';raw=b'synthetic video bytes'
+        row={'source':str(missing),'source_size':len(raw),'mtime_ns':0,'size':len(raw),'member':'','offset':-1,'crc':None,'content_hash':hashlib.sha256(raw).hexdigest()}
+        with self.assertRaises(SourceUnavailable):prepare([row],self.root/'cache')
+        playback=Playback(self.root/'cache');result=playback.start(row['content_hash'],[row])
+        self.assertEqual(result['state'],'error');self.assertIn('not connected',result['message']);self.assertNotIn('limits',result['message'])
+        self.assertIsNone(playback.active);self.assertEqual(playback.status(row['content_hash'],[row])['state'],'error')
+        # The drive returns: the stale verdict clears and direct playback is judged afresh instead of from the cached miss.
+        missing.parent.mkdir();missing.write_bytes(raw)
+        self.assertEqual(playback.status(row['content_hash'],[row])['state'],'pending')
+        # The other half: a reachable file that really is over the size limit names that limit.
+        big=self.row(missing,raw);big['size']=MAX_SOURCE+1
+        self.assertEqual(playback.start(big['content_hash'],[big])['state'],'preparing')
+        for _ in range(500):
+            if playback.active is None:break
+            time.sleep(.01)
+        message=playback.status(big['content_hash'],[big])['message']
+        self.assertIn('limits',message);self.assertNotIn('not connected',message)
+
     def test_http_range_streams_only_requested_bytes_and_refuses_invalid_ranges(self):
         path=self.root/'fixture.mp4';path.write_bytes(b'0123456789')
         for header,expected_status,body in [('bytes=2-5',206,b'2345'),('bytes=-3',206,b'789'),('bytes=8-',206,b'89'),(None,200,b'0123456789'),('bytes=50-',416,b''),('bytes=0-2,4-5',416,b'')]:
@@ -51,77 +72,34 @@ class VideoTests(unittest.TestCase):
         with self.assertRaises(ValueError):byte_range('bytes=-0',10)
 
 
-class LongPlaybackTests(unittest.TestCase):
-    setUp=VideoTests.setUp
-    row=VideoTests.row
-    def fixture(self,codec='libx264',duration=7210):
-        path=self.root/'long.mkv'
-        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=32x32:r=1/10','-t',str(duration),'-c:v',codec,'-threads','1','-pix_fmt','yuv420p',str(path)],check=True,capture_output=True)
-        raw=path.read_bytes()
-        return path,raw,self.row(path,raw)
+class DirectPlaybackTests(unittest.TestCase):
+    def setUp(self):
+        self.root=scratch()
 
-    def test_long_copy_preserves_packets_and_supports_late_seeking(self):
-        path,raw,row=self.fixture();target=prepare([row],self.root/'cache')
+    def clip(self,name,*args):
+        path=self.root/name
+        subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=160x120:r=10','-t','1',*args,str(path)],check=True,capture_output=True)
+        return path
+
+    def test_playable_originals_stream_unchanged_and_others_wait_for_preparation(self):
+        from src.video import browser_playable,direct_source
+        playable=self.clip('h264.mp4','-c:v','libx264','-pix_fmt','yuv420p');other=self.clip('mpeg4.avi','-c:v','mpeg4')
+        self.assertTrue(browser_playable(playable));self.assertFalse(browser_playable(other));self.assertFalse(browser_playable(self.root/'missing.mp4'))
+        rows=lambda path:[VideoTests.row(self,path,path.read_bytes())]
+        self.assertEqual(direct_source(rows(playable)),playable);self.assertIsNone(direct_source(rows(other)))
+        zipped=dict(rows(playable)[0],member='clip.mp4');self.assertIsNone(direct_source([zipped]))
+        playback=Playback(self.root/'cache');digest=rows(playable)[0]['content_hash']
+        self.assertEqual(playback.status(digest)['state'],'pending')
+        status=playback.status(digest,rows(playable));self.assertEqual((status['state'],status.get('direct')),('ready',True))
+        self.assertEqual(playback.file(digest,rows(playable)),playable)
+        self.assertEqual(playback.status(rows(other)[0]['content_hash'],rows(other))['state'],'pending')
+        self.assertFalse((self.root/'cache').exists())
+
+    def test_prepare_reads_plain_files_in_place_and_records_the_encoder(self):
+        from src import video
+        other=self.clip('mpeg4.avi','-c:v','mpeg4');row=VideoTests.row(self,other,other.read_bytes());raw=other.read_bytes()
+        target=prepare([row],self.root/'cache')
         receipt=json.loads(target.with_suffix('.json').read_text())
-        self.assertEqual(receipt['method'],'stream-copy');self.assertEqual(probe(target),7210)
-        self.assertEqual(path.read_bytes(),raw)
-        def packet_count(path):
-            r=subprocess.run(['ffprobe','-v','error','-count_packets','-select_streams','v:0','-show_entries','stream=nb_read_packets','-of','json',str(path)],check=True,capture_output=True)
-            return json.loads(r.stdout)['streams'][0]['nb_read_packets']
-        self.assertEqual(packet_count(path),packet_count(target))
-        r=subprocess.run(['ffmpeg','-v','error','-ss','7190','-i',str(target),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],check=True,capture_output=True)
-        self.assertEqual(len(r.stdout),32*32*3)
-
-    def test_incompatible_long_video_does_not_launch_transcode(self):
-        path,raw,row=self.fixture(codec='mpeg4')
-        with self.assertRaisesRegex(ValueError,'H.264'):prepare([row],self.root/'cache')
-        self.assertFalse(list((self.root/'cache').glob('*.mp4')))
-        self.assertEqual(path.read_bytes(),raw)
-
-    def test_long_copy_keeps_derivative_space_reserve(self):
-        path,raw,row=self.fixture();cache=self.root/'cache';verified_copy(row,cache)
-        with patch('src.video.shutil.disk_usage',return_value=type('Space',(),{'free':12*1024**3+row['size']})()):
-            with self.assertRaisesRegex(RuntimeError,'space'):prepare([row],cache)
-        self.assertFalse(list(cache.glob('*.mp4')))
-
-    def test_duration_over_six_hours_remains_unsupported(self):
-        path,raw,row=self.fixture(duration=21610)
-        with self.assertRaisesRegex(ValueError,'duration'):prepare([row],self.root/'cache')
-        self.assertFalse(list((self.root/'cache').glob('*.mp4')))
-
-
-class LongAudioTests(unittest.TestCase):
-    setUp=VideoTests.setUp
-    row=VideoTests.row
-    fixture=LongPlaybackTests.fixture
-
-    def ac3_fixture(self):
-        path,raw,row=self.fixture()
-        source=self.root/'long-audio.mkv'
-        # Sparse long video with one second of synthetic audio exercises muxing cheaply.
-        subprocess.run(['ffmpeg','-v','error','-i',str(path),'-f','lavfi','-t','1','-i','anullsrc=r=32000:cl=5.1','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','ac3','-threads','1',str(source)],check=True,capture_output=True)
-        raw=source.read_bytes()
-        return source,raw,self.row(source,raw)
-
-    def test_long_ac3_converts_audio_and_keeps_video(self):
-        path,raw,row=self.ac3_fixture();target=prepare([row],self.root/'cache')
-        receipt=json.loads(target.with_suffix('.json').read_text())
-        self.assertEqual(receipt['method'],'video-copy-audio-transcode')
-        self.assertIn('stereo',receipt['settings']);self.assertEqual(path.read_bytes(),raw)
-        def streams(path):
-            r=subprocess.run(['ffprobe','-v','error','-count_packets','-show_entries','stream=codec_type,codec_name,channels,nb_read_packets','-of','json',str(path)],check=True,capture_output=True)
-            return json.loads(r.stdout)['streams']
-        before,after=streams(path),streams(target)
-        self.assertEqual(before[0]['nb_read_packets'],after[0]['nb_read_packets'])
-        self.assertEqual(after[1]['codec_name'],'aac');self.assertEqual(after[1]['channels'],2)
-        self.assertAlmostEqual(probe(path),probe(target),delta=1)
-
-    def test_missing_converted_audio_is_not_published(self):
-        path,raw,row=self.ac3_fixture();run=subprocess.run
-        def without_audio(command,**kwargs):
-            if command[0]=='ffmpeg':command=command[:-1]+['-an',command[-1]]
-            return run(command,**kwargs)
-        with patch('src.video.subprocess.run',side_effect=without_audio):
-            with self.assertRaisesRegex(RuntimeError,'audio'):prepare([row],self.root/'cache')
-        self.assertFalse((self.root/'cache'/(row['content_hash']+'.json')).exists())
-        self.assertFalse((self.root/'cache'/(row['content_hash']+'.mp4')).exists())
+        self.assertIn(receipt['encoder'],video.ENCODERS);self.assertEqual(receipt['extractor_version'],'2')
+        self.assertFalse((self.root/'cache'/(row['content_hash']+'.source')).exists())
+        self.assertEqual(other.read_bytes(),raw)

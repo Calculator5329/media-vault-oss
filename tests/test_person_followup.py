@@ -33,7 +33,7 @@ class PersonFollowupTests(unittest.TestCase):
         database=f.f.root/'faces.db';faces.index(f.f.db,database,Backend(),reader=lambda row:'synthetic');faces.publish_groups(database,Backend.identity)
         person=v.organize('person',{'person':'','name':'Synthetic person'})['data']['person']
         self.assertEqual(v.person_suggestions(person)['reference_faces'],0)
-        reference=v.face_review()['observations'][0]
+        reference=v.face_review()['groups'][0]['faces'][0]
         v.organize('faces',{'person':person,'faces':[{k:reference[k] for k in ('face_id','content_hash')}]})
         before=len(v.organization.path.read_text().splitlines());result=v.person_suggestions(person)
         self.assertEqual(result['total'],2);self.assertEqual(len(v.organization.path.read_text().splitlines()),before)

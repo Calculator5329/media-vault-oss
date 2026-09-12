@@ -30,21 +30,3 @@ class JobTests(unittest.TestCase):
         result=self.cycle();self.assertEqual(result['state'],'waiting_for_sources')
         self.assertEqual(jobs.status(self.f.f.root)['generation'],first['generation'])
         self.assertIs(self.viewer.snapshot(),before)
-
-    def test_bounded_batch_publishes_partial_snapshot_then_finishes(self):
-        # Establish a generation before adding more files than one batch can hash.
-        self.cycle()
-        for name in ('batch-one.jpg','batch-two.jpg'):
-            (self.f.f.source/name).write_bytes(name.encode())
-        result=jobs.cycle(self.config,self.f.f.root,self.f.f.exports,seconds=2,limit=1)
-        self.assertEqual(result['state'],'partial')
-        self.assertGreater(result['imports']['pending'],0)
-        self.assertEqual(jobs.status(self.f.f.root)['generation'],result['generation'])
-        partial=self.viewer.snapshot().search(query='batch-')['items']
-        self.assertEqual(sum(bool(item['content_hash']) for item in partial),1)
-        finished=self.cycle()
-        self.assertEqual(finished['state'],'complete')
-        self.assertEqual(finished['imports']['pending'],0)
-        self.assertEqual(self.viewer.snapshot().search(query='batch-')['total'],2)
-        again=self.cycle()
-        self.assertEqual(again['imports']['verified_contents'],finished['imports']['verified_contents'])

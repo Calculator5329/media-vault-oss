@@ -10,11 +10,12 @@ import zipfile
 
 from src import catalog, imports
 from src.kit import validate_row
+from tests.scratch import scratch
 
 
 class ImportTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = scratch()
         self.source = self.root / 'originals'
         self.source.mkdir()
         self.exports = self.root / 'exports'

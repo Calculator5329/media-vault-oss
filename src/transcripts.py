@@ -56,7 +56,6 @@ def validate(value):
 
 
 class Whisper:
-    chunk_long_videos=True
     retry_policy='encoding-1'
     retry_timestamps=True
     def __init__(self,path):
@@ -72,10 +71,6 @@ class Whisper:
         self.model=faster_whisper.WhisperModel(str(root),device='cpu',compute_type='int8',cpu_threads=4,num_workers=1,local_files_only=True)
 
     def transcribe(self,stream):
-        return validate(self.transcribe_raw(stream))
-
-    def transcribe_raw(self,stream):
-        """Local inference payload; callers must validate before publication."""
         import av
         with av.open(stream,metadata_errors='surrogateescape') as container:
             if not container.streams.audio:return {'duration':0,'language':None,'segments':[],'status':'no_audio'}
@@ -86,7 +81,7 @@ class Whisper:
         for segment in segments:
             if time.monotonic()-start>900:raise TimeoutError('Transcription timed out')
             if segment.text.strip():values.append({k:getattr(segment,k) for k in ('start','end','text','avg_logprob','no_speech_prob')})
-        return {'duration':info.duration,'language':info.language,'segments':values,'status':'complete' if values else 'no_speech'}
+        return validate({'duration':info.duration,'language':info.language,'segments':values,'status':'complete' if values else 'no_speech'})
 
 
 
@@ -103,7 +98,7 @@ def timestamp_retry_candidates(conn,backend,candidates,frames_database):
             and any(row['size']<=4*1024**3 for row in candidates[digest])}
 
 
-def index(import_database,output,backend,seconds=600,limit=5,reader=None,chunk_reader=None):
+def index(import_database,output,backend,seconds=600,limit=5,reader=None):
     source=Path(import_database).resolve(strict=True)
     if reader is None:reader=lambda row:transcript_stream(row,Path(output).resolve().parent/'playback')
     if source==Path(output).resolve():raise ValueError('Transcript store must be separate')
@@ -146,12 +141,8 @@ def index(import_database,output,backend,seconds=600,limit=5,reader=None,chunk_r
                 conn.execute('UPDATE transcript_work SET status=?,segments=?,error=?,derived_at=? WHERE content_hash=? AND model=?',(value['status'] if value else 'error',len(value['segments']) if value else 0,error,now(),digest,backend.identity))
             done.add(digest);eligible.discard(digest);processed+=1
             print(json.dumps({'phase':'transcripts','processed_this_run':processed,'processed_videos':len(done),'status':value['status'] if value else 'error'}),flush=True)
-        chunks={'chunks_this_run':0,'remaining_chunk_videos':0}
-        if getattr(backend,'chunk_long_videos',False):
-            from .transcript_chunks import run
-            chunks=run(conn,backend,candidates,source.with_name('frames.db'),Path(output).resolve().parent,start+seconds,max(0,limit-processed),reader=chunk_reader)
         with conn:conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('transcripts_current',?)",(backend.identity,))
-        return {'processed_this_run':processed,'processed_videos':len(done),'remaining':len(set(candidates)-done)+len(eligible)+chunks['remaining_chunk_videos'],'model':backend.identity,**chunks}
+        return {'processed_this_run':processed,'processed_videos':len(done),'remaining':len(set(candidates)-done)+len(eligible),'model':backend.identity}
 
 
 def main():

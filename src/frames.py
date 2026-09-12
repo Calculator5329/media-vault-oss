@@ -21,7 +21,6 @@ def sampling_interval(duration):
 
 
 class Sampler:
-    fill_gaps=True
     def __init__(self):
         import av
         self.av=av
@@ -130,11 +129,7 @@ def index(import_database,output,backend,seconds=300,limit=100,reader=video_stre
         with conn:
             conn.execute("INSERT OR REPLACE INTO settings VALUES('frames_current',?)",(backend.identity,))
             conn.execute("INSERT OR REPLACE INTO settings VALUES('frames_compatible',?)",(json.dumps(models),))
-        gap={'processed':0,'remaining':0,'frames':0}
-        if getattr(backend,'fill_gaps',False):
-            from .frame_gap_work import run
-            gap=run(conn,candidates,root,deadline,max(0,limit-processed))
-        return {'processed_this_run':processed+gap['processed'],'processed_videos':len(done),'remaining':len(set(candidates)-done)+gap['remaining'],'frames':conn.execute('SELECT count(*) FROM frame_facts WHERE sampler IN ('+marks+')',models).fetchone()[0]+gap['frames'],'errors':sum(error is not None for error in work.values()),'model':backend.identity}
+        return {'processed_this_run':processed,'processed_videos':len(done),'remaining':len(set(candidates)-done),'frames':conn.execute('SELECT count(*) FROM frame_facts WHERE sampler IN ('+marks+')',models).fetchone()[0],'errors':sum(error is not None for error in work.values()),'model':backend.identity}
 
 
 def coverage(conn):
@@ -149,59 +144,9 @@ def coverage(conn):
             for row in conn.execute('SELECT content_hash,error FROM frame_work WHERE sampler=?',(model,)):
                 work[row[0]]=row[1]
         count=conn.execute('SELECT count(*) FROM frame_facts WHERE sampler IN ('+marks+')',models).fetchone()[0]
-    from .frame_gap_work import observations as gap_observations,coverage as gap_coverage
-    count+=len(gap_observations(conn));gap_counts=gap_coverage(conn)
     return {'contents':len(work),'frames':count,'errors':sum(error is not None for error in work.values()),
-            **({'gap_requests':gap_counts} if gap_counts is not None else {}),'retained_attempts':conn.execute('SELECT count(*) FROM frame_work').fetchone()[0],
+            'retained_attempts':conn.execute('SELECT count(*) FROM frame_work').fetchone()[0],
             'retained_error_records':conn.execute('SELECT count(*) FROM frame_work WHERE error IS NOT NULL').fetchone()[0]}
-
-
-def sampling_gaps(rows):
-    """Measured spacing between snapshots, including video start/end edges.
-
-A gap is not a missed event and has no recognition-confidence interpretation.
-Conflicting durations or invalid timestamps leave spacing unavailable.
-"""
-    grouped=defaultdict(list)
-    for row in rows:grouped[row['content_hash']].append(row)
-    result={}
-    for digest,samples in grouped.items():
-        durations={r['duration'] for r in samples}
-        valid=len(durations)==1 and all(isinstance(r[k],(int,float)) and math.isfinite(r[k]) for r in samples for k in ('duration','timestamp'))
-        duration=next(iter(durations)) if valid else None
-        valid=valid and duration>0 and all(0<=r['timestamp']<=duration for r in samples)
-        times=sorted({r['timestamp'] for r in samples}) if valid else []
-        points=[0,*times,duration] if valid else []
-        result[digest]={'available':bool(valid),'sample_count':len(samples),
-                        'largest_gap_seconds':max((b-a for a,b in zip(points,points[1:])),default=None),
-                        'duration_seconds':duration if valid else None}
-    return result
-
-
-def gap_plans(rows,trigger=30.,spacing=15.,max_targets=1024):
-    """Bounded requests for later decoding; never evidence of decoded frames."""
-    if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0 for v in (trigger,spacing)) or spacing>trigger:
-        raise ValueError('Choose finite positive spacing no greater than the gap trigger')
-    if isinstance(max_targets,bool) or not isinstance(max_targets,int) or not 1<=max_targets<=4096:raise ValueError('Target cap must be 1 through 4096')
-    rows=list(rows);grouped=defaultdict(list)
-    for row in rows:grouped[row['content_hash']].append(row)
-    gaps=sampling_gaps(rows);result={}
-    policy={'version':'gap-requests-1','trigger_seconds':trigger,'spacing_seconds':spacing,'max_targets':max_targets}
-    for digest,samples in grouped.items():
-        measured=gaps[digest]
-        if not measured['available'] or measured['duration_seconds']>21600:
-            result[digest]={'status':'unavailable','targets':[],'meaning':'No bounded consistent video timeline'};continue
-        if measured['largest_gap_seconds']<=trigger:continue
-        basis=sorted((r['frame_id'],r['sampler'],r['image_hash'],r['timestamp'],r['duration']) for r in samples)
-        revision=hashlib.sha256(json.dumps({'policy':policy,'content_hash':digest,'samples':basis},sort_keys=True).encode()).hexdigest()
-        times=[0,*sorted({r['timestamp'] for r in samples}),measured['duration_seconds']]
-        intervals=[(a,b,math.ceil((b-a)/spacing)) for a,b in zip(times,times[1:]) if b-a>trigger]
-        count=sum(parts-1 for a,b,parts in intervals)
-        targets=[a+(b-a)*n/parts for a,b,parts in intervals for n in range(1,parts)] if count<=max_targets else []
-        result[digest]={'status':'planned' if count<=max_targets else 'over_budget','revision':revision,'policy':policy,
-                        'requested_count':count,'targets':targets,'duration_seconds':measured['duration_seconds'],
-                        'meaning':'Requested timestamps only; decoder must retain actual timestamps and source verification'}
-    return result
 
 
 def main():

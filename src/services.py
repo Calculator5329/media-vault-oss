@@ -23,13 +23,13 @@ def render(repo,resources,exports,logs,kit):
     config=json.loads((repo/'vault.config.json').read_text());models=json.loads(resources.read_text())
     python=Path(models['vision_python']).absolute()
     roots=[Path(s).absolute() for s in config['sources']]
-    if not roots:raise ValueError('At least one media source is required')
+    if len(roots)!=1:raise ValueError('Exactly one master source is required')
     for path in (repo,resources,logs,kit,python):
         resolved=path.resolve()
         assert_local_state(resolved,'Runtime state')
     commands={
         'imports':[python,'-m','src.jobs','--config',repo/'vault.config.json','--directory',repo/'.catalog','--exports',Path(exports).absolute(),'--watch'],
-        'enrichment':[python,'-m','src.enrichment','--resources',resources,'--directory',repo/'.catalog',*[argument for root in roots for argument in ('--source',root)],'--source',Path(exports).absolute(),'--seconds','300','--limit','1000'],
+        'enrichment':[python,'-m','src.enrichment','--resources',resources,'--directory',repo/'.catalog','--source',roots[0],'--source',Path(exports).absolute(),'--seconds','300','--limit','1000'],
         'viewer':[python,'-m','src.server','--port','8770','--database',repo/'.catalog/catalog.db','--imports',repo/'.catalog/imports.db','--vision-model',models['vision_model']],
     }
     if any(c in str(logs) for c in ('%', '$', '\n', '\r', '\x00', '"')):raise ValueError('Unsupported log directory characters')

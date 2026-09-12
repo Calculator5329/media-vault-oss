@@ -7,11 +7,12 @@ import warnings
 import zipfile
 
 from src.exports import audit, MAX_JSON
+from tests.scratch import scratch
 
 
 class ExportAuditTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = scratch()
         self.prefix = 'Takeout/Google Photos/Photos from 2026/'
 
     def archive(self, number, entries):

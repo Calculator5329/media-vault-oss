@@ -22,7 +22,6 @@ VERSION='faces-1'
 
 
 class OpenCVFaces:
-    embedding_dimension=128
     def __init__(self,models):
         import cv2
         import numpy as np
@@ -96,25 +95,12 @@ def index(import_database,output,backend,seconds=600,limit=1000,reader=read_imag
                 conn.execute('INSERT INTO face_work VALUES(?,?,?,?,?,?)',(digest,backend.identity,'error' if error else 'complete',len(observations),error,now()))
             done.add(digest);processed+=1
             if processed%100==0:print(json.dumps({'phase':'face-observations',**summary(conn,backend.identity),'processed_this_run':processed}),flush=True)
-        from .face_recovery import run as recover
-        recovered=recover(conn,backend,candidates,source.parent/'image-recovery.db',start+seconds,max(0,limit-processed))
-        return {**summary(conn,backend.identity),'processed_this_run':processed+recovered['processed'],'candidates':len(candidates),'remaining':len(set(candidates)-done)+recovered['remaining'],'model':backend.identity}
+        return {**summary(conn,backend.identity),'processed_this_run':processed,'candidates':len(candidates),'remaining':len(set(candidates)-done),'model':backend.identity}
 
 
 def summary(conn,model):
     row=conn.execute("SELECT count(*),sum(status='error'),sum(status='complete' AND face_count=0),sum(face_count) FROM face_work WHERE model=?",(model,)).fetchone()
-    values=dict(zip(('processed_photos','errors','photos_without_detected_faces','observations'),(v or 0 for v in row)))
-    from .face_recovery import completed
-    recovered=completed(conn,model);values['errors']-=len(recovered)
-    values['photos_without_detected_faces']+=sum(r['face_count']==0 for r in recovered.values())
-    values['observations']+=sum(r['face_count'] for r in recovered.values())
-    return values
-
-
-def observations(conn,model):
-    from .face_recovery import observations as recovered
-    cursor=conn.execute('SELECT * FROM face_observations WHERE model=?',(model,));columns=[r[0] for r in cursor.description]
-    return [dict(zip(columns,row)) for row in cursor]+recovered(conn,model)
+    return dict(zip(('processed_photos','errors','photos_without_detected_faces','observations'),(v or 0 for v in row)))
 
 
 def suggest_groups(observations,anchor_threshold=0.65,member_threshold=0.55):
@@ -142,11 +128,46 @@ thresholds remain provisional until evaluated on the owner's review examples.
     return sorted([{'id':g['id'],'faces':g['faces']} for g in groups],key=lambda g:(-len(g['faces']),g['id']))
 
 
+SENSITIVITY={'tight':0.62,'balanced':0.52,'loose':0.42}
+
+
+def cluster(observations,threshold):
+    """Live review groups: greedy centroid grouping, strongest faces first.
+
+Faces join the closest group centroid at or above the threshold, one face per
+photo per group. Still model suggestions, never identities; the threshold is the
+owner's sensitivity choice and can be changed without touching stored facts.
+Returns groups as lists of face ids, largest first."""
+    import numpy as np
+    if not observations:return []
+    rows=sorted(observations,key=lambda r:r['face_id'])
+    n=len(rows);V=np.asarray([unit(r['vector']) for r in rows],dtype=np.float32)
+    best=np.full(n,-1.0,dtype=np.float32)
+    for start in range(0,n,2048):
+        block=V[start:start+2048]@V.T
+        for i in range(block.shape[0]):block[i,start+i]=-1
+        best[start:start+2048]=block.max(axis=1)
+    order=sorted(range(n),key=lambda i:(-float(best[i]),rows[i]['face_id']))
+    centroids=np.zeros((n,V.shape[1]),dtype=np.float32);sums=[];members=[];contents=[]
+    for i in order:
+        v=V[i];digest=rows[i]['content_hash'];placed=False
+        if members:
+            scores=centroids[:len(members)]@v
+            for k in np.argsort(-scores):
+                if scores[k]<threshold:break
+                if digest in contents[k]:continue
+                members[k].append(i);contents[k].add(digest);sums[k]+=v;centroids[k]=sums[k]/np.linalg.norm(sums[k]);placed=True;break
+        if not placed:
+            centroids[len(members)]=v;sums.append(v.copy());members.append([i]);contents.append({digest})
+    groups=[{'id':rows[m[0]]['face_id'],'faces':[rows[i]['face_id'] for i in m],'centroid':(sums[k]/np.linalg.norm(sums[k])).tolist()} for k,m in enumerate(members)]
+    return sorted(groups,key=lambda g:(-len(g['faces']),g['id']))
+
+
 def publish_groups(output,model):
     source=Path(output).resolve(strict=True)
     with closing(sqlite3.connect(source.as_uri()+'?mode=ro',uri=True)) as conn:
         roots=json.loads(conn.execute("SELECT value FROM settings WHERE key='sources'").fetchone()[0])
-        rows=[{'face_id':r['face_id'],'content_hash':r['content_hash'],'vector':json.loads(r['vector_json'])} for r in observations(conn,model)]
+        rows=[{'face_id':r[0],'content_hash':r[1],'vector':json.loads(r[2])} for r in conn.execute('SELECT face_id,content_hash,vector_json FROM face_observations WHERE model=?',(model,))]
     groups=suggest_groups(rows)
     revision=hashlib.sha256(json.dumps({'faces':sorted(r['face_id'] for r in rows),'version':'complete-link-1','anchor':0.65,'member':0.55},sort_keys=True).encode()).hexdigest()
     with database(output,roots) as conn:

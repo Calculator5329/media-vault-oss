@@ -5,39 +5,35 @@ writer order. Existing workers own identity, model provenance, and checkpoints.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_EXCEPTION
-from contextlib import contextmanager,closing
+from contextlib import contextmanager
 from .portable import lock as flock, assert_local_state
-import hashlib
 import json
 import os
 from pathlib import Path
 import signal
-import sqlite3
 import subprocess
 import threading
 import time
 import uuid
 from .imports import now
 
-ROLES={'photos':('faces','ocr','fingerprints'),'gpu':('vision','scenes','descriptions','quality'),'audio':('frames','transcripts')}
-# A stage runs only when every resource it needs is present in the resources file.
-STAGE_NEEDS={'faces':('face_python','face_models'),'ocr':('face_python',),'fingerprints':('face_python',),
-             'vision':('vision_python','vision_model'),'scenes':('vision_python','vision_model'),'descriptions':('vision_python','description_model'),
-             'quality':('quality_python','quality_model'),'frames':('audio_python',),'transcripts':('audio_python','transcript_model')}
+ROLES={'photos':('faces','ocr','similar'),'gpu':('vision','scenes','descriptions'),'audio':('frames','transcripts')}
 RESOURCES={'vision_python','face_python','audio_python','vision_model','face_models','description_model','transcript_model'}
-QUALITY_RESOURCES={'quality_python','quality_model'}
-ALL_RESOURCES=RESOURCES|QUALITY_RESOURCES
+# A stage runs only when every resource it needs is present in the resources file.
+STAGE_NEEDS={'faces':('face_python','face_models'),'ocr':('face_python',),'similar':('face_python',),
+             'vision':('vision_python','vision_model'),'scenes':('vision_python','vision_model'),'descriptions':('vision_python','description_model'),
+             'frames':('audio_python',),'transcripts':('audio_python','transcript_model')}
 
 
 def enabled_roles(resources):
     present=set(resources)
-    unknown=present-ALL_RESOURCES
+    unknown=present-RESOURCES
     if unknown:raise ValueError('Unknown resource keys: '+', '.join(sorted(unknown)))
     roles={role:tuple(s for s in stages if set(STAGE_NEEDS[s])<=present) for role,stages in ROLES.items()}
     roles={role:stages for role,stages in roles.items() if stages}
     if not roles:raise ValueError('No enrichment stage has its runtime and model paths; see docs/models.md')
     return roles
-COUNTS={'chunks_this_run','remaining_chunk_videos','processed_this_run','indexed','errors','remaining','processed_photos','observations','photos_without_detected_faces','candidates','processed_videos','frames','model'}
+COUNTS={'processed_this_run','indexed','errors','remaining','processed_photos','observations','photos_without_detected_faces','candidates','processed_videos','frames','model'}
 
 
 def local_path(value):
@@ -69,9 +65,9 @@ def exclusive(directory):
 
 
 def command(stage,directory,resources,seconds,limit):
-    runtime='quality_python' if stage=='quality' else 'face_python' if stage in ('faces','ocr','fingerprints') else 'audio_python' if stage in ('transcripts','frames') else 'vision_python'
+    runtime='face_python' if stage in ('faces','ocr','similar') else 'audio_python' if stage in ('transcripts','frames') else 'vision_python'
     args=[str(resources[runtime]),'-m','src.'+stage,'--imports',str(directory/'imports.db'),'--database',str(directory/(stage+'.db')),'--seconds',str(seconds),'--limit',str(limit)]
-    model={'vision':'vision_model','scenes':'vision_model','descriptions':'description_model','transcripts':'transcript_model','faces':'face_models','quality':'quality_model'}.get(stage)
+    model={'vision':'vision_model','scenes':'vision_model','descriptions':'description_model','transcripts':'transcript_model','faces':'face_models'}.get(stage)
     if model:args.extend(['--models' if stage=='faces' else '--model',str(resources[model])])
     if stage=='faces':args.append('--publish-groups')
     return args
@@ -116,19 +112,6 @@ def run_worker(args,log,repo,stop,timeout):
     return {'state':'complete','result':result} if result is not None else {'state':'error','error':'MissingCheckpoint'}
 
 
-def file_revision(path):
-    try:
-        info=Path(path).stat()
-        return info.st_ino,info.st_size,info.st_mtime_ns
-    except OSError:return None
-
-
-def store_revision(path):
-    path=Path(path)
-    wal=file_revision(str(path)+'-wal')
-    return file_revision(path),wal if wal and wal[1] else None
-
-
 class Supervisor:
     def __init__(self,repo,directory,resources,sources,seconds=300,limit=1000,interval=30,idle_interval=900,runner=run_worker):
         self.repo=Path(repo).resolve();self.directory=local_path(directory)
@@ -141,58 +124,18 @@ class Supervisor:
         if not self.sources:raise ValueError('Read-only source roots are required')
         if any(self.directory==p or p in self.directory.parents for p in self.sources):raise ValueError('Derived state cannot be inside originals')
         if min(seconds,limit,interval,idle_interval)<1:raise ValueError('Work bounds must be positive')
-        self.seconds=seconds;self.limit=limit;self.interval=interval;self.idle_interval=idle_interval;self.runner=runner;self.stop=threading.Event();self.completed={}
-        self.roles=roles
+        self.seconds=seconds;self.limit=limit;self.interval=interval;self.idle_interval=idle_interval;self.runner=runner;self.stop=threading.Event();self.roles=roles
         self.directory.mkdir(parents=True,exist_ok=True);self.logs=self.directory/'worker-logs';self.logs.mkdir(exist_ok=True)
-
-    def input_revision(self,stage):
-        """Read cheap local evidence; never load a model or infer pending work."""
-        digest=hashlib.sha256()
-        kind='photo' if stage in ('faces','ocr','vision','descriptions','quality','fingerprints') else 'video'
-        try:
-            with closing(sqlite3.connect((self.directory/'imports.db').as_uri()+'?mode=ro',uri=True,timeout=1)) as conn:
-                for row in conn.execute('SELECT id,content_hash,source_size,mtime_ns,kind,metadata FROM occurrences WHERE present=1 AND content_hash IS NOT NULL AND kind=? ORDER BY id',(kind,)):
-                    digest.update(json.dumps(row,ensure_ascii=True).encode());digest.update(b'\n')
-            for path in sorted((self.repo/'src').glob('*.py')):
-                digest.update(path.name.encode());digest.update(path.read_bytes())
-            for key,path in sorted(self.resources.items()):
-                receipt=path/'acquisition.json' if path.is_dir() else path
-                digest.update(json.dumps([key,str(path),file_revision(receipt)]).encode())
-                if path.is_dir() and receipt.is_file():
-                    raw=receipt.read_bytes();digest.update(raw)
-                    value=json.loads(raw)
-                    for entry in [*value.get('files',[]),*value.get('models',[])]:
-                        filename=entry.get('file')
-                        if isinstance(filename,str):digest.update(json.dumps([filename,file_revision(path/filename)]).encode())
-            if stage in ('scenes','transcripts'):
-                digest.update(json.dumps(store_revision(self.directory/'frames.db')).encode())
-        except (OSError,sqlite3.Error,TypeError,ValueError):return None
-        return digest.digest()
 
     def batch(self,stage):
         if self.stop.is_set():return {'state':'interrupted'}
         if not all(p.is_dir() for p in self.sources):return record(self.directory,stage,'waiting_for_sources')
         if not (self.directory/'imports.db').is_file():return record(self.directory,stage,'waiting_for_imports')
-        try:
-            with closing(sqlite3.connect((self.directory/'imports.db').as_uri()+'?mode=ro',uri=True,timeout=1)) as conn:
-                row=conn.execute("SELECT value FROM settings WHERE key='sources'").fetchone()
-            if row and not all(Path(p).is_dir() for p in json.loads(row[0])):
-                return record(self.directory,stage,'waiting_for_sources')
-        except (sqlite3.Error,ValueError,TypeError):pass
-        revision=self.input_revision(stage)
-        checkpoint=self.directory/(stage+'.db')
-        previous=self.completed.get(stage)
-        if revision is not None and previous and previous[0]==revision and checkpoint.is_file() and previous[1]==store_revision(checkpoint):
-            return record(self.directory,stage,'idle',reason='unchanged_inputs',result={**previous[2],'processed_this_run':0},last_completed_at=previous[3])
         log=self.logs/(stage+'-'+uuid.uuid4().hex+'.log')
         record(self.directory,stage,'running',log=log.name)
         try:result=self.runner(command(stage,self.directory,self.resources,self.seconds,self.limit),log,self.repo,self.stop,self.seconds+1200)
         except Exception as exc:result={'state':'error','error':type(exc).__name__}
-        event=record(self.directory,stage,**result,log=log.name)
-        if revision is not None and result['state']=='complete' and result.get('result',{}).get('remaining')==0 and checkpoint.is_file():
-            self.completed[stage]=(revision,store_revision(checkpoint),result['result'],event['at'])
-        else:self.completed.pop(stage,None)
-        return event
+        return record(self.directory,stage,**result,log=log.name)
 
     def queue(self,stages,once):
         due={s:0 for s in stages}

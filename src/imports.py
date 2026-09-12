@@ -56,10 +56,10 @@ def database(path, sources):
         create_fact_table(conn, 'identity_facts', {'occurrence_id': 'TEXT NOT NULL', 'content_hash': 'TEXT NOT NULL'})
         configured = json.dumps([str(r) for r in roots])
         recorded = conn.execute("SELECT value FROM settings WHERE key='sources'").fetchone()
-        if recorded and not set(json.loads(recorded[0])).issubset(str(r) for r in roots):
+        if recorded and recorded[0] != configured:
             conn.close()
             raise ValueError('Database belongs to different sources')
-        conn.execute("INSERT OR REPLACE INTO settings VALUES('sources',?)", (configured,))
+        conn.execute("INSERT OR IGNORE INTO settings VALUES('sources',?)", (configured,))
         conn.commit()
         try:
             yield conn

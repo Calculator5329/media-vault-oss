@@ -1,3 +1,4 @@
+from pathlib import Path
 """Missing metadata may use matching decoded evidence, never an unrelated hint."""
 import json
 import subprocess
@@ -12,7 +13,7 @@ class PlaybackRecoveryTests(unittest.TestCase):
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=green:s=160x120:r=10','-t','1','-c:v','libx264','-threads','1','-pix_fmt','yuv420p',str(path)],check=True,capture_output=True)
         raw=path.read_bytes();row=f.row(path,raw);actual=video.probe
         def probe(path):
-            if path.suffix=='.source':raise video.MissingDuration()
+            if path.suffix=='.source' or Path(path).name=='synthetic.mp4':raise video.MissingDuration()  # the original is now read in place
             return actual(path)
         hint={'content_hash':row['content_hash'],'basis':'decoded_video_extent','duration':1.,'sampler':'synthetic'}
         with patch('src.video.probe',side_effect=probe):

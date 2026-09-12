@@ -205,7 +205,7 @@ def unchanged(path, row):
 def enrich(source, conn, limit=None, workers=4):
     if workers not in range(1, 9) or (limit is not None and limit < 0):
         raise ValueError('Use 1–8 workers and a nonnegative limit')
-    rows = conn.execute("SELECT * FROM files WHERE present=1 AND kind IN ('photo','video') AND (metadata_version IS NULL OR metadata_version != ?) ORDER BY error IS NOT NULL,path LIMIT ?", (VERSION, -1 if limit is None else limit)).fetchall()
+    rows = conn.execute("SELECT * FROM files WHERE present=1 AND kind IN ('photo','video') AND (metadata_version IS NULL OR metadata_version != ?) ORDER BY path LIMIT ?", (VERSION, -1 if limit is None else limit)).fetchall()
     def read(row):
         path = source / row['path']
         if not unchanged(path, row):

@@ -29,7 +29,7 @@ def status(directory):
             try:event=json.loads(line)
             except json.JSONDecodeError:continue
             last=event
-            if event['state'] in ('complete','partial'):generation=event['generation']
+            if event['state']=='complete':generation=event['generation']
     return {**(last or {'state':'not_started'}),'generation':generation}
 
 
@@ -92,12 +92,11 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--config',type=Path,default=Path('vault.config.json'));p.add_argument('--directory',type=Path,default=Path('.catalog'));p.add_argument('--exports',type=Path,help='Folder of Google Takeout ZIP files (optional)');p.add_argument('--seconds',type=int,default=300);p.add_argument('--limit',type=int,default=1000);p.add_argument('--watch',action='store_true');p.add_argument('--interval',type=int,default=900);a=p.parse_args()
     if min(a.seconds,a.limit,a.interval)<1:p.error('Work limits must be positive')
     while True:
-        revision=config_revision(a.config)
         try:result=cycle(a.config,a.directory,a.exports,a.seconds,a.limit)
         except Exception as exc:result={'state':'error','error':type(exc).__name__}
         print(json.dumps(result),flush=True)
         if not a.watch:break
-        wait_for_config(a.config,revision,min(a.interval,30) if result['state']=='partial' else a.interval)
+        time.sleep(a.interval)
 
 
 if __name__=='__main__':main()

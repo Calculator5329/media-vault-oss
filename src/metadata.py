@@ -106,12 +106,6 @@ def refresh(import_database, export_root, output):
             add(row,row['source'],{'kind':'embedded','recovery_of':raw.get('extractor','catalog'),
                 'basis':'detected_avif'},recovered['extractor'],derived,values,recovered['extractor_version'])
             counts['embedded_occurrences_recovered'] += 1
-    from .loose_sidecars import collect
-    adjacent,adjacent_counts=collect(rows)
-    counts.update(adjacent_counts)
-    for row,sidecar,data in adjacent:
-        add(row,sidecar['source'],{'kind':'adjacent_sidecar','sidecar_hash':sidecar['content_hash'],
-            'media_occurrence':row['id']},'google-photos-loose-sidecar',derived,list(sidecar_values(data)))
     # Include JSON-only parts too; their sidecars can point to media in other parts.
     for path in sorted(export_root.iterdir()) if export_root is not None else ():
         if path.is_symlink() or not path.is_file() or not path.name.startswith(('takeout-', 'Photos-')) or path.suffix.lower() != '.zip':
@@ -174,8 +168,6 @@ def refresh(import_database, export_root, output):
         counts['contents_with_competing_capture_dates'] = conn.execute('''SELECT count(*) FROM (
           SELECT content_hash FROM metadata_facts WHERE attribute='date' AND json_extract(value_json,'$.meaning')='capture'
           GROUP BY content_hash HAVING count(DISTINCT json_extract(value_json,'$.value'))>1)''').fetchone()[0]
-        with conn:
-            conn.execute("INSERT OR REPLACE INTO settings VALUES('metadata_counts',?)",(json.dumps(dict(counts)),))
     return {'derived_at':derived, 'extractor':VERSION, **dict(counts)}
 
 

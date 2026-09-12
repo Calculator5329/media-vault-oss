@@ -111,10 +111,7 @@ def index(import_database,output,backend,seconds=600,limit=1000,reader=None):
             processed+=1
             if processed%100==0:print(json.dumps({'phase':'ocr','processed_this_run':processed,'indexed':len(done),'errors':len(failed-done)}),flush=True)
         with conn:conn.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('ocr_current',?)",(backend.identity,))
-        from .ocr_recovery import run,facts
-        recovery=run(conn,backend,candidates,source.with_name('image-recovery.db'),start+seconds,max(0,limit-processed))
-        recovered=facts(conn,backend.identity)
-        return {'processed_this_run':processed+recovery['processed'],'indexed':len(done)+len(recovered),'errors':len(failed-done-set(recovered)),'remaining':len(set(candidates)-done-failed)+len(eligible)+recovery['remaining'],'model':backend.identity,**({'recovered':len(recovered)} if recovered else {})}
+        return {'processed_this_run':processed,'indexed':len(done),'errors':len(failed-done),'remaining':len(set(candidates)-done-failed)+len(eligible),'model':backend.identity}
 
 
 def main():

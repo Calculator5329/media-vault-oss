@@ -11,7 +11,7 @@ Open work is a checkbox. Shipped work moves to `docs/changelog.md`.
 ## Next
 
 - [ ] A one-command `setup-models --all` reference run with sizes and wall time per model in `docs/evidence/`, so people can decide what to download before they start.
-- [ ] Descriptions (Qwen3-VL) and quality (MUSIQ) as downloadable models in `setup_models.py`. Today the code runs them if the folders exist, but the downloader only fetches faces, whisper, SigLIP2 and the gazetteer.
+- [ ] Descriptions (Qwen3-VL) as a downloadable model in `setup_models.py`. Today the code runs it if the folder exists, but the downloader only fetches faces, whisper, SigLIP2 and the gazetteer.
 - [ ] Non-NVIDIA GPU notes for the vision runtime (ROCm, Apple silicon).
 
 ## Later

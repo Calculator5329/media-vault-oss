@@ -34,3 +34,35 @@ def evidence(facts):
     elif choices:status='single'
     else:status='missing'
     return {'status':status,'choices':choices,'comparison':'Explicit offsets are compared in UTC. Unknown timezones are never inferred.'}
+
+
+import re
+PATTERNS=[('timestamp',re.compile(r'(?<!\d)((?:19|20)\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?!\d)'),0.8),
+          ('date',re.compile(r'(?<!\d)((?:19|20)\d{2})-(\d{2})-(\d{2})(?!\d)'),0.7),
+          ('compact',re.compile(r'(?<!\d)((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)'),0.6),
+          ('epoch',re.compile(r'(?<!\d)(1[3-8]\d{8})(\d{3})?(?!\d)'),0.6)]
+
+
+def infer(names,latest_year=None):
+    """Capture-date candidates read from file names alone.
+
+Camera, phone, screenshot and messaging apps stamp the moment into the name.
+These are inferences with a stated confidence, never recorded capture facts,
+and they carry no timezone unless the name is a UTC epoch."""
+    latest=latest_year or datetime.now().year+1
+    seen=set();candidates=[]
+    for name in sorted(set(names)):
+        for label,pattern,confidence in PATTERNS:
+            match=pattern.search(name)
+            if not match:continue
+            try:
+                if label=='epoch':when=datetime.fromtimestamp(int(match.group(1)),timezone.utc)
+                elif label=='timestamp':when=datetime(*map(int,match.groups()))
+                else:when=datetime(int(match.group(1)),int(match.group(2)),int(match.group(3)),12)
+            except (ValueError,OverflowError,OSError):continue
+            if not 1990<=when.year<=latest:continue
+            value=when.isoformat()
+            if value not in seen:
+                seen.add(value);candidates.append({'value':value,'meaning':'capture','field':'file name ('+label+')','confidence':confidence,'name':name})
+            break
+    return sorted(candidates,key=lambda c:(-c['confidence'],c['value']))

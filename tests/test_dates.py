@@ -41,3 +41,42 @@ class DateTests(unittest.TestCase):
         self.assertEqual(rebuilt.facts[digest],original)
         with self.assertRaises(ValueError):rebuilt.organize('date',{'content_hash':digest,'choice':'nonexistent'})
         self.assertEqual(len(viewer.organization.path.read_text().splitlines()),2)
+
+
+class InferredDateTests(unittest.TestCase):
+    def test_file_names_yield_ranked_candidates_and_nothing_else(self):
+        from src.dates import infer
+        found=infer(['IMG_20230412_101500.jpg','2021-07-04 party.png','20191225_dinner.heic','1580000000000.jpg','random.png','99991231.jpg','IMG_20231399_000000.jpg'],latest_year=2026)
+        self.assertEqual([c['value'][:10] for c in found],['2023-04-12','2021-07-04','2019-12-25','2020-01-26'])
+        self.assertEqual([c['confidence'] for c in found],[0.8,0.7,0.6,0.6])
+        self.assertTrue(all(c['meaning']=='capture' and c['field'].startswith('file name') for c in found))
+        self.assertEqual(len(infer(['IMG_20230412_101500.jpg','IMG_20230412_101500 (1).jpg'])),1)
+
+    def test_inferred_dates_show_as_inferred_and_owner_dates_override_then_reset(self):
+        import zipfile
+        f=test_library.LibraryTests();f.setUp()
+        with zipfile.ZipFile(f.f.zip,'a') as z:z.writestr('Google Photos/IMG_20230412_101500.jpg',b'named by a phone camera')
+        viewer=f.build();photo=viewer.search(query='IMG_2023')['items'][0];digest=photo['content_hash']
+        self.assertTrue(photo['date_inferred']);self.assertEqual(photo['day'],'2023-04-12')
+        self.assertEqual(photo['date']['source'],'Inferred from file name')
+        self.assertEqual(viewer.search(year='2023')['total'],1);self.assertNotIn(digest,{i['content_hash'] for i in viewer.search(kind='undated')['items']})
+        review=viewer.date_review(photo['id'])
+        self.assertTrue(review['inferred']);self.assertEqual(review['status'],'missing')
+        inferred=[c for c in review['choices'] if c.get('inferred')]
+        self.assertEqual([c['date']['value'] for c in inferred],['2023-04-12T10:15:00'])
+        viewer.organize('date',{'content_hash':digest,'choice':inferred[0]['id']})
+        confirmed=viewer.search(query='IMG_2023')['items'][0]
+        self.assertTrue(confirmed['date_confirmed']);self.assertFalse(confirmed['date_inferred'])
+        viewer.organize('set_date',{'contents':[digest],'date':'2020-02-29'})
+        moved=viewer.search(query='IMG_2023')['items'][0]
+        self.assertEqual((moved['day'],moved['date']['source'],moved['date_inferred']),('2020-02-29','Owner-set date',False))
+        self.assertEqual(viewer.search(year='2020')['total'],1)
+        rebuilt=Library(f.f.catalog,f.f.db,organization=viewer.organization.path)
+        self.assertEqual(rebuilt.search(year='2020')['total'],1)
+        self.assertEqual(rebuilt.date_review(photo['id'])['selected']['source'],'owner')
+        rebuilt.organize('reset_date',{'content_hash':digest})
+        back=rebuilt.search(query='IMG_2023')['items'][0]
+        self.assertEqual((back['day'],back['date_inferred']),('2023-04-12',True))
+        with self.assertRaises(ValueError):rebuilt.organize('set_date',{'contents':['0'*64],'date':'2020-02-29'})
+        with self.assertRaises(ValueError):rebuilt.organize('set_date',{'contents':[digest],'date':'2020-02-30'})
+        with self.assertRaises(ValueError):rebuilt.organize('set_date',{'contents':[digest],'date':'yesterday'})

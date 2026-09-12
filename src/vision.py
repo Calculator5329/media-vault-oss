@@ -73,7 +73,9 @@ class Siglip:
         return unit(result.cpu().tolist())
 
 
-def read_image(row,max_side=1600):
+def read_image(row,max_side=1600,fast=False):
+    """Decode a verified source image. fast=True lets JPEG decode at a reduced DCT scale
+(no smaller than twice max_side) which is several times quicker for previews."""
     from PIL import Image,ImageOps
     before=_source_stat(row)
     if row['size']>MAX_IMAGE_BYTES:
@@ -94,6 +96,7 @@ def read_image(row,max_side=1600):
     with Image.open(io.BytesIO(raw)) as image:
         if image.width*image.height>80_000_000:
             raise ValueError('Image exceeds bounded decode dimensions')
+        if fast and image.format=='JPEG':image.draft('RGB',(max_side*2,max_side*2))
         result=ImageOps.exif_transpose(image).convert('RGB')
     result.thumbnail((max_side,max_side))
     return result
@@ -149,12 +152,8 @@ def index(import_database, output, encoder, seconds=600, limit=1000, reader=read
             processed+=1
             if processed%100==0:
                 print(json.dumps({'phase':'vision-index','processed_this_run':processed,'indexed':len(done),'errors':len(failed)}),flush=True)
-        from .visual_recovery import run,facts
-        recovery=run(conn,encoder,candidates,import_database.with_name('image-recovery.db'),deadline,max(0,limit-processed))
-        recovered=facts(conn,encoder.identity)
-        with conn:conn.execute("INSERT OR REPLACE INTO settings VALUES('visual_current',?)",(encoder.identity,))
-        return {'processed_this_run':processed+recovery['processed'],'indexed':len(done)+len(recovered),'errors':len(failed-done-set(recovered)),'verified_photo_candidates':len(candidates),
-                'remaining':len(set(candidates)-done-failed)+recovery['remaining'],'model':encoder.identity,**({'recovered':len(recovered)} if recovered else {})}
+        return {'processed_this_run':processed,'indexed':len(done),'errors':len(failed),'verified_photo_candidates':len(candidates),
+                'remaining':len(set(candidates)-done-failed),'model':encoder.identity}
 
 
 def search(database_path,encoder,query,limit=20,allowed=None):
@@ -164,11 +163,7 @@ def search(database_path,encoder,query,limit=20,allowed=None):
     ranked=[]
     indexed=0
     with closing(sqlite3.connect(Path(database_path).resolve(strict=True).as_uri()+'?mode=ro',uri=True)) as conn:
-        from itertools import chain
-        from .visual_recovery import facts
-        recovered=facts(conn,encoder.identity)
-        base=conn.execute('SELECT content_hash,vector_json FROM visual_facts WHERE model=?',(encoder.identity,))
-        for content_hash,raw in chain(base,((h,f['vector_json']) for h,f in recovered.items())):
+        for content_hash,raw in conn.execute('SELECT content_hash,vector_json FROM visual_facts WHERE model=?',(encoder.identity,)):
             indexed+=1
             if allowed is not None and content_hash not in allowed:
                 continue
@@ -200,9 +195,8 @@ def main():
 class SearchIndex:
     """Keep the local vector matrix in memory between queries.
 
-The writer only appends completed vectors. Encoder identity, original rows and
-recovered variants identify this read snapshot. NumPy is in the vision runtime;
-stdlib callers retain the same results.
+The writer only appends completed vectors. A new row count refreshes this read
+snapshot. NumPy is in the vision runtime; stdlib callers retain the same results.
 """
     def __init__(self,path,encoder,refresh_after=60):
         self.path=Path(path);self.encoder=encoder;self.revision=None
@@ -217,13 +211,9 @@ stdlib callers retain the same results.
         if self.matrix is None or time.monotonic()-self.checked_at>=self.refresh_after:
             with closing(sqlite3.connect(self.path.resolve(strict=True).as_uri()+'?mode=ro',uri=True)) as conn:
                 conn.execute('BEGIN')
-                from .visual_recovery import facts
-                recovered=facts(conn,self.encoder.identity)
-                base_revision=conn.execute('SELECT count(*),max(derived_at) FROM visual_facts WHERE model=?',(self.encoder.identity,)).fetchone()
-                revision=(self.encoder.identity,base_revision,tuple(sorted((h,f['model'],f['derived_at']) for h,f in recovered.items())))
+                revision=conn.execute('SELECT count(*),max(derived_at) FROM visual_facts WHERE model=?',(self.encoder.identity,)).fetchone()
                 if revision!=self.revision:
                     rows=conn.execute('SELECT content_hash,vector_json FROM visual_facts WHERE model=? ORDER BY content_hash',(self.encoder.identity,)).fetchall()
-                    rows=sorted([*rows,*((h,f['vector_json']) for h,f in recovered.items())],key=lambda r:r[0])
                     hashes=[r[0] for r in rows];matrix=np.asarray([json.loads(r[1]) for r in rows],dtype=np.float32)
                     self.hashes=hashes;self.matrix=matrix;self.revision=revision
             self.checked_at=time.monotonic()

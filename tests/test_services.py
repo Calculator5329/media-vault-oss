@@ -1,15 +1,14 @@
 """Persistent units preserve venv execution and safe source arguments."""
-import os
-os.environ.setdefault('MEDIA_VAULT_EXTERNAL_ROOTS', '/run/media')  # the tests use /run/media as the example removable root
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from src.services import render,quoted
+from tests.scratch import scratch
 
 class ServiceTests(unittest.TestCase):
     def test_runtime_paths_and_source_spaces_survive_rendering(self):
-        root=Path(tempfile.mkdtemp());repo=root/'synthetic repo';repo.mkdir()
+        root=scratch();repo=root/'synthetic repo';repo.mkdir()
         (repo/'vault.config.json').write_text(json.dumps({'sources':['/run/media/synthetic photos']}))
         resources=root/'resources.json';python=root/'venv/bin/python'
         resources.write_text(json.dumps({'vision_python':str(python),'vision_model':str(root/'model')}))

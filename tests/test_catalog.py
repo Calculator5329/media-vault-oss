@@ -6,11 +6,12 @@ import unittest
 from unittest.mock import patch
 
 from src import catalog
+from tests.scratch import scratch, base as scratch_base
 
 
 class FreshCatalogTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(dir=scratch_base())
         self.root = Path(self.tmp.name)
         self.source = self.root / 'originals'
         self.source.mkdir()
@@ -37,30 +38,6 @@ class FreshCatalogTests(unittest.TestCase):
         tables = {r[0] for r in self.conn.execute("select name from sqlite_master where type='table'")}
         self.assertNotIn('person', tables)
         self.assertEqual(image.read_bytes(), b'changed bytes')
-
-    def test_failed_metadata_does_not_starve_new_files_in_bounded_batches(self):
-        broken=self.source/'a-unreadable.jpg'
-        broken.write_bytes(b'synthetic unreadable')
-        catalog.inventory(self.source,self.conn)
-        with patch.object(catalog,'inspect',side_effect=OSError('synthetic read failure')):
-            catalog.enrich(self.source,self.conn,limit=1)
-        fresh=self.source/'z-new.jpg'
-        fresh.write_bytes(b'synthetic readable')
-        catalog.inventory(self.source,self.conn)
-        def inspect(path):
-            if path==broken:raise OSError('synthetic read failure')
-            return {'errors':[],'date':None,'location':None}
-        with patch.object(catalog,'inspect',side_effect=inspect):
-            catalog.enrich(self.source,self.conn,limit=1)
-        rows={r['path']:dict(r) for r in self.conn.execute('SELECT * FROM files')}
-        self.assertEqual(rows['z-new.jpg']['metadata_version'],catalog.VERSION)
-        self.assertEqual(rows['a-unreadable.jpg']['error'],'OSError')
-        self.assertIsNone(rows['a-unreadable.jpg']['metadata'])
-        # Retained failures remain eligible once new work drains.
-        with patch.object(catalog,'inspect',return_value={'errors':[]}) as reader:
-            catalog.enrich(self.source,self.conn,limit=1)
-            reader.assert_called_once_with(broken)
-        self.assertIsNone(self.conn.execute("SELECT error FROM files WHERE path=?",(broken.name,)).fetchone()[0])
 
     def test_duplicate_content_is_verified_not_inferred_from_size(self):
         for name, content in [('a.jpg', b'ABC'), ('b.jpg', b'ABC'), ('c.jpg', b'XYZ'), ('d.jpg', b'unique-size')]:
@@ -100,8 +77,7 @@ class FreshCatalogTests(unittest.TestCase):
     def test_inventory_retains_missing_rows_and_excludes_symlinks(self):
         image = self.source / 'photo.jpg'
         image.write_bytes(b'image')
-        try: (self.source / 'link.jpg').symlink_to(image)
-        except OSError: self.skipTest('symlinks unavailable')
+        (self.source / 'link.jpg').symlink_to(image)
         (self.source / '.hidden').write_bytes(b'not media')
         catalog.inventory(self.source, self.conn)
         self.assertEqual(catalog.summary(self.conn)['files'], 1)

@@ -1,6 +1,4 @@
 """Owner tags survive restart; sources remain unchanged and untrusted writes refuse."""
-import os
-os.environ.setdefault('MEDIA_VAULT_EXTERNAL_ROOTS', '/run/media')  # the tests use /run/media as the example removable root
 import io
 import json
 import unittest
@@ -84,9 +82,9 @@ class OrganizationTests(unittest.TestCase):
         db=self.fixture.f.root/'faces.db'
         faces.index(self.fixture.f.db,db,Backend(),reader=lambda row:'fixture')
         faces.publish_groups(db,Backend.identity)
-        review=self.viewer.face_review();face=review['observations'][0];face_id=face['face_id']
+        review=self.viewer.face_review();face=review['groups'][0]['faces'][0];face_id=face['face_id']
         self.viewer.organize('ignore_faces',{'faces':[face_id]})
-        self.assertEqual(self.viewer.face_review(ignored=True)['groups'][0]['faces'],[face_id])
+        self.assertEqual([f['face_id'] for f in self.viewer.face_review(ignored=True)['groups'][0]['faces']],[face_id])
         self.viewer.organize('restore_faces',{'faces':[face_id]})
         self.assertFalse(self.viewer.face_review(ignored=True)['groups'])
         person=self.person()
@@ -94,3 +92,118 @@ class OrganizationTests(unittest.TestCase):
         self.assertEqual(self.viewer.face_review()['confirmed'],1)
         self.assertEqual(self.viewer.search(person=person)['total'],1)
         with self.assertRaises(ValueError):self.viewer.organize('faces',{'person':person,'faces':[{'face_id':'0'*64,'content_hash':face['content_hash']}]})
+
+    def test_merge_person_moves_tags_and_faces_and_retires_the_source(self):
+        a=self.person();b=self.viewer.organize('person',{'person':'','name':'Other Person'})['data']['person']
+        digest=self.photo['content_hash']
+        self.viewer.organize('add',{'person':a,'contents':[digest]})
+        self.viewer.organize('merge_person',{'person':a,'into':b})
+        state=self.viewer.organization.read()
+        self.assertNotIn(a,state['people']);self.assertEqual(state['tags'][digest],{b})
+        with self.assertRaises(ValueError):self.viewer.organize('add',{'person':a,'contents':[digest]})
+        with self.assertRaises(ValueError):self.viewer.organize('merge_person',{'person':b,'into':b})
+        with self.assertRaises(ValueError):self.viewer.organize('merge_person',{'person':b,'into':'0'*32})
+
+    def test_face_review_hints_named_people_and_keeps_groups_stable_across_naming(self):
+        from src import faces
+        class Backend:
+            identity='synthetic-hints'
+            def detect(self,image):return [{'box':[.1,.1,.4,.5],'score':.99,'vector':[1,0]}]
+        db=self.fixture.f.root/'faces.db'
+        faces.index(self.fixture.f.db,db,Backend(),reader=lambda row:'fixture');faces.publish_groups(db,Backend.identity)
+        review=self.viewer.face_review(sensitivity='balanced')
+        self.assertEqual(len(review['groups']),1);self.assertIsNone(review['groups'][0]['looks_like'])
+        first=review['groups'][0]['faces'][0];person=self.person()
+        self.viewer.organize('faces',{'person':person,'faces':[{k:first[k] for k in ('face_id','content_hash')}]})
+        after=self.viewer.face_review(sensitivity='balanced')
+        self.assertEqual(after['groups'][0]['id'],review['groups'][0]['id'])
+        self.assertEqual(len(after['groups'][0]['faces']),len(review['groups'][0]['faces'])-1)
+        self.assertEqual(after['groups'][0]['looks_like']['id'],person);self.assertEqual(after['confirmed'],1)
+        self.assertEqual(self.viewer.people()['people'][0]['face'],first['face_id'])
+        with self.assertRaises(ValueError):self.viewer.face_review(sensitivity='anything')
+
+
+
+class PersonReviewCompletionTests(unittest.TestCase):
+    def test_hidden_people_lose_hints_and_covers_follow_confirmed_faces(self):
+        from src import faces
+        from tests import test_library
+        f=test_library.LibraryTests();f.setUp();library=f.build()
+        class Backend:
+            identity='synthetic-review'
+            def detect(self,image):return [{'box':[.1,.1,.5,.5],'vector':[1,0],'score':.9}]
+        database=f.f.root/'faces.db';faces.index(f.f.db,database,Backend(),reader=lambda row:'synthetic');faces.publish_groups(database,Backend.identity)
+        person=library.organize('person',{'person':'','name':'Grandma'})['data']['person']
+        face=library.face_review()['groups'][0]['faces'][0]
+        library.organize('faces',{'person':person,'faces':[{k:face[k] for k in ('face_id','content_hash')}]})
+        listed=library.people()['people'][0]
+        self.assertEqual((listed['face'],listed['cover_face'],listed['hidden'],listed['confirmed_faces']),(face['face_id'],None,False,1))
+        with self.assertRaises(ValueError):library.organize('cover_face',{'person':person,'face_id':'0'*64})
+        library.organize('cover_face',{'person':person,'face_id':face['face_id']})
+        self.assertEqual(library.people()['people'][0]['cover_face'],face['face_id'])
+        mine=next(x for x in library.photo_faces(face['item_id'])['faces'] if x['face_id']==face['face_id'])
+        self.assertEqual((mine['person']['id'],mine['cover'],mine['ignored']),(person,True,False))
+        library.organize('hide_person',{'person':person})
+        self.assertTrue(library.people()['people'][0]['hidden'])
+        self.assertTrue(all(g['looks_like'] is None for g in library.face_review()['groups']),'hidden people never hint')
+        library.organize('show_person',{'person':person})
+        self.assertFalse(library.people()['people'][0]['hidden'])
+        library.organize('ignore_faces',{'faces':[face['face_id']]})
+        self.assertIsNone(library.people()['people'][0]['cover_face'],'an ignored face cannot stay the cover')
+        with self.assertRaises(ValueError):library.organize('hide_person',{'person':'f'*32})
+
+
+class StackReviewTests(unittest.TestCase):
+    def test_proposed_stacks_collapse_the_grid_until_the_owner_rules(self):
+        from src import similar
+        f=test_library.LibraryTests();f.setUp();library=f.build()
+        photos=[i for i in library.items if i['kind']=='photo' and i['content_hash']]
+        self.assertGreaterEqual(len(photos),3)
+        first,second,third=photos[0]['content_hash'],photos[1]['content_hash'],photos[2]['content_hash']
+        library.organize('set_date',{'contents':[first,second],'date':'2020-05-05'})
+        hashes={first:'ff00ff00ff00ff00',second:'ff00ff00ff00ff01',third:'0000000000000000'}
+        similar.index(f.f.db,f.f.root/'similar.db',reader=lambda row:row['content_hash'],hasher=lambda digest:hashes[digest])
+        review=library.stacks()
+        self.assertEqual((review['proposed'],review['confirmed'],review['ready']),(1,0,True))
+        proposal=review['stacks'][0]
+        self.assertEqual(sorted(proposal['contents']),sorted([first,second]))
+        visible={i['content_hash'] for i in library.search()['items']}
+        self.assertEqual(len(visible),len(photos)-1+sum(i['kind']!='photo' for i in library.items),'a proposal collapses to its top')
+        self.assertIn(proposal['top'],visible);self.assertNotIn(next(c for c in proposal['contents'] if c!=proposal['top']),visible)
+        self.assertEqual(library.search(stack='all')['total'],len(library.items))
+        self.assertEqual([i['content_hash'] for i in library.search(kind='stacks')['items']],[proposal['top']])
+        self.assertEqual(library.search(stack=proposal['id'])['total'],2)
+        top=next(i for i in library.search()['items'] if i['content_hash']==proposal['top'])
+        self.assertEqual((top['stack']['count'],top['stack']['top'],top['stack']['confirmed']),(2,True,False))
+        library.organize('unstack',{'stack':proposal['id']})
+        self.assertEqual(library.stacks()['proposed'],0,'keep separate silences the same proposal')
+        self.assertEqual(library.search()['total'],len(library.items))
+        other=next(c for c in proposal['contents'] if c!=proposal['top'])
+        confirmed=library.organize('stack',{'stack':'','contents':[first,second],'top':other})['data']
+        self.assertEqual(confirmed['stack'],similar.stack_id([first,second]))
+        review=library.stacks()
+        self.assertEqual((review['confirmed'],review['proposed'],review['stacks'][0]['top']),(1,0,other))
+        self.assertIn(other,{i['content_hash'] for i in library.search()['items']})
+        with self.assertRaises(ValueError):library.organize('stack',{'stack':'','contents':[first],'top':first})
+        with self.assertRaises(ValueError):library.organize('stack',{'stack':'','contents':[first,second],'top':third})
+        with self.assertRaises(ValueError):library.organize('unstack',{'stack':'0'*32})
+        rebuilt=Library(f.f.catalog,f.f.db,organization=library.organization.path)
+        self.assertEqual(rebuilt.stacks()['confirmed'],1,'confirmed stacks survive a rebuild')
+
+    def test_undated_proposals_wait_for_a_verdict_before_collapsing(self):
+        from src import similar
+        f=test_library.LibraryTests();f.setUp();library=f.build()
+        photos=[i for i in library.items if i['kind']=='photo' and i['content_hash']]
+        undated=[i['content_hash'] for i in photos if not i['day']][:2]
+        if len(undated)<2:
+            for c in [i['content_hash'] for i in photos][:2]:library.organize('reset_date',{'content_hash':c})
+            undated=[i['content_hash'] for i in library.items if i['kind']=='photo' and i['content_hash'] and not i['day']][:2]
+        self.assertEqual(len(undated),2)
+        similar.index(f.f.db,f.f.root/'similar.db',reader=lambda row:row['content_hash'],hasher=lambda digest:'ff00ff00ff00ff00' if digest in undated else '0000000000000000')
+        review=library.stacks()
+        proposal=next(s for s in review['stacks'] if sorted(s['contents'])==sorted(undated))
+        self.assertFalse(proposal['collapse'])
+        self.assertEqual(library.search()['total'],len(library.items),'undated proposals never hide a photo')
+        self.assertEqual(library.search(kind='stacks')['total'],0)
+        library.organize('stack',{'stack':proposal['id'],'contents':proposal['contents'],'top':proposal['top']})
+        self.assertEqual(library.search()['total'],len(library.items)-1,'a confirmed stack collapses whatever its dates')

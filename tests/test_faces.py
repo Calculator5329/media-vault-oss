@@ -65,3 +65,16 @@ class GroupTests(unittest.TestCase):
             conn.row_factory=__import__('sqlite3').Row
             rows=[dict(r) for r in conn.execute('SELECT * FROM face_groups')]
             self.assertEqual(len(rows),1);validate_row('face_groups',rows[0])
+
+
+class LiveGroupingTests(unittest.TestCase):
+    def test_cluster_follows_sensitivity_and_never_joins_faces_from_one_photo(self):
+        rows=[{'face_id':'a'*64,'content_hash':'1'*64,'vector':[1,0]},{'face_id':'b'*64,'content_hash':'2'*64,'vector':[0.95,0.31]},
+              {'face_id':'c'*64,'content_hash':'1'*64,'vector':[0.99,0.1]},{'face_id':'d'*64,'content_hash':'3'*64,'vector':[0,1]}]
+        groups=faces.cluster(rows,0.5);members={g['id']:set(g['faces']) for g in groups}
+        self.assertEqual(sorted(len(m) for m in members.values()),[1,1,2])
+        joined=next(m for m in members.values() if len(m)==2)
+        self.assertIn('b'*64,joined);self.assertTrue(joined<={'a'*64,'b'*64,'c'*64})
+        self.assertFalse({'a'*64,'c'*64}<=joined,'two faces from one photo cannot be one person')
+        self.assertEqual(len(faces.cluster(rows,0.999)),4)
+        self.assertEqual(faces.cluster([],0.5),[])

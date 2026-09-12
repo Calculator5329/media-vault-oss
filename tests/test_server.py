@@ -1,6 +1,5 @@
+import inspect
 """Viewer contract tests with synthetic files only; no bound listener needed."""
-import os
-os.environ.setdefault('MEDIA_VAULT_EXTERNAL_ROOTS', '/run/media')  # the tests use /run/media as the example removable root
 import io
 from contextlib import closing
 import json
@@ -9,11 +8,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from src import catalog, server
+from tests.scratch import scratch
 
 
 class ViewerTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix='mv-viewer-test-'))
+        self.root = scratch('mv-viewer-test-')
         source = self.root/'source'
         source.mkdir()
         for name,content in [('a.jpg',b'ABC'),('b.jpg',b'ABC'),('c.mp4',b'Video')]:
@@ -74,8 +74,7 @@ class ViewerTests(unittest.TestCase):
     def test_source_symlink_is_refused(self):
         item=self.viewer.search(query='a.jpg')['items'][0]
         (self.source/'a.jpg').rename(self.root/'archive.jpg')
-        try: (self.source/'a.jpg').symlink_to(self.root/'archive.jpg')
-        except OSError: self.skipTest('symlinks unavailable')
+        (self.source/'a.jpg').symlink_to(self.root/'archive.jpg')
         with self.assertRaises(FileNotFoundError):self.viewer.source_path(item['id'])
 
     def test_preview_cache_cannot_be_in_source(self):
@@ -102,9 +101,23 @@ class ViewerTests(unittest.TestCase):
         instance.path=path;instance.headers={'Host':host}
         if origin:instance.headers['Origin']=origin
         response=[]
-        instance.send=lambda status,body,mime='application/json':response.append((status,body,mime))
+        instance.send=lambda status,body,mime='application/json',cache=False:response.append((status,body,mime))
         instance.do_GET()
         return response[0]
+
+    def test_map_library_and_basemap_are_served_locally_and_nothing_comes_from_the_network(self):
+        status,body,mime=self.request('/vendor/leaflet/leaflet.js')
+        self.assertEqual((status,mime),(200,'text/javascript; charset=utf-8'));self.assertIn(b'leaflet',body[:2000])
+        self.assertEqual(self.request('/vendor/leaflet/leaflet.css')[2],'text/css; charset=utf-8')
+        self.assertEqual(self.request('/vendor/leaflet/../../src/server.py')[0],404)
+        source=inspect.getsource(server)
+        self.assertIn("img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self';",source)
+        self.assertNotIn('openstreetmap',source.lower());self.assertNotIn('openstreetmap',(server.ROOT/'web/app.js').read_text().lower())
+        status,body,mime=self.request('/basemap.js');self.assertEqual((status,mime),(200,'text/javascript; charset=utf-8'));self.assertIn(b'VaultBasemap',body)
+        status,body,mime=self.request('/basemap/land.json');self.assertEqual((status,mime),(200,'application/json'));self.assertIn(b'"n"',body[:200])
+        self.assertEqual(self.request('/basemap/../server.py')[0],404);self.assertEqual(self.request('/basemap/nothing.json')[0],404)
+        self.assertEqual(self.request('/basemap/detail.json')[0],200)
+        self.assertNotIn('cdnjs',(server.ROOT/'web/app.js').read_text())
 
     def test_http_entrypoint_rejects_foreign_hosts_origins_and_paths(self):
         self.assertEqual(self.request('/api/summary',host='evil.example:8770')[0],403)
@@ -140,3 +153,12 @@ class ViewerTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class PreviewCacheTests(unittest.TestCase):
+    def test_previews_are_immutable_cacheable_and_api_responses_are_not(self):
+        from src import server
+        source=inspect.getsource(server)
+        self.assertIn("'private, max-age=31536000, immutable' if cache else 'no-store'",source)
+        for route in ('current.thumbnail(key).read_bytes()','current.face_preview(','current.frame_preview('):
+            start=source.index(route);self.assertIn('cache=True',source[start:start+220],route)

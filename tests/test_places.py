@@ -8,11 +8,12 @@ import zipfile
 from src.places import Gazetteer,refresh
 from src.library import Library
 from tests import test_library
+from tests.scratch import scratch
 
 
 class PlaceTests(unittest.TestCase):
     def gazetteer(self):
-        root=Path(tempfile.mkdtemp())
+        root=scratch()
         def row(i,name,lat,lon):return '\t'.join([str(i),name,name,'',str(lat),str(lon),'P','PPL','XX','','AA','','','','1000','','','Etc/UTC','2026-09-05'])
         with zipfile.ZipFile(root/'cities500.zip','w') as z:z.writestr('cities500.txt',row(1,'Synthetic Town',40,-90)+'\n'+row(2,'Dateline Town',0,179.9)+'\n')
         (root/'admin1CodesASCII.txt').write_text('XX.AA\tExample Region\n')

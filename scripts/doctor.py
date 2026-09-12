@@ -35,7 +35,7 @@ DEFAULTS = {'sources': [], 'exports': None, 'tier': 'personal',
 BASE_PACKAGES = [('PIL', 'Pillow'), ('numpy', 'numpy'), ('cv2', 'opencv-python-headless'),
                  ('onnxruntime', 'onnxruntime'), ('faster_whisper', 'faster-whisper'), ('av', 'av')]
 OPTIONAL_PACKAGES = [('torch', 'vision search, video moments, descriptions'),
-                     ('transformers', 'descriptions and quality scoring')]
+                     ('transformers', 'descriptions')]
 MODELS = [('faces', 'face detection and grouping'), ('whisper-small', 'transcripts for video and audio'),
           ('siglip2', 'vision search and video moments'), ('gazetteer', 'place names for coordinates')]
 # Where tesseract keeps its trained data, in the order the doctor looks after TESSDATA_PREFIX.
@@ -216,7 +216,7 @@ def suggest(hardware):
         {'model': 'siglip2', 'recommended': bool(gpu),
          'why': f'{gpu["name"]} present, indexing is fast.' if gpu
          else 'No NVIDIA GPU found. Worth it only if slow CPU indexing is acceptable.'},
-        {'model': 'descriptions and quality', 'recommended': big,
+        {'model': 'descriptions', 'recommended': big,
          'why': f'{vram} GB VRAM is enough.' if big
          else f'Needs an NVIDIA GPU with 6 GB or more; this one has {vram} GB.' if vram
          else 'Needs an NVIDIA GPU with 6 GB or more; none found.'}]}

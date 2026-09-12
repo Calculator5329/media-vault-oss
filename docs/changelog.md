@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-12, later
+
+The viewer and its server code now come from the private vault's current UI branch, not the
+older main branch the first cut was copied from.
+
+- One search box with suggestions and result groups replaces the toolbar of date pickers,
+  slideshow, highlights and filter chips. Year and month scrubber on the timeline.
+- Map view (offline Natural Earth), trips with journey legs on the map, buckets, similar
+  shots, fill-the-gaps proposals, favorite and hide per photo, face strips inside cards,
+  export of buckets to folders, playback that streams originals and encodes in place.
+- The viewer now lists every configured source, not only the first: catalogs under
+  `.catalog/source-catalogs/` are read alongside `catalog.db`.
+- Similar-shot hashing runs in the base environment (it needs no torch), so it is on for
+  every install.
+- Gone with the older branch: MUSIQ quality scoring, the additive-sources page under
+  Imports, and the recovered-image provenance stages that only made sense for the author's
+  damaged archive.
+- Verified: 262 unit tests, a scan of the CC0 test library (56 files across two sources),
+  faces, OCR and similar-shot passes, place labels, and the screenshots on the README page.
+
 ## 2026-09-12
 
 Code-only public fork of the author's private Media Vault, prepared for distribution.

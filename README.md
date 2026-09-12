@@ -2,10 +2,10 @@
 
 A private photo and video library that runs on your own computer. Point it at the folders
 your pictures already live in and it builds a catalog beside them: a timeline, people,
-places, trips, albums, duplicates and search, served as a page on localhost. Your originals
+places, trips, buckets, similar shots and search, served as a page on localhost. Your originals
 are never moved, renamed or written to. No image ever leaves the machine.
 
-![The timeline: photos grouped by day, with filters for videos, exact duplicates and files missing a location](docs/images/photos.png)
+![The timeline: photos grouped by day, with a year and month scrubber on the right](docs/images/photos.png)
 
 Optional local AI adds faces, text in photos, image search by description, video transcripts
 and scene previews. Each is a model you download once and run offline. Skip any of them and
@@ -44,11 +44,11 @@ flowchart LR
     B --> D[(imports.db<br/>SHA-256 identity)]
     C --> E[viewer<br/>127.0.0.1:8770]
     D --> E
-    D --> F[enrich<br/>faces, OCR, fingerprints,<br/>frames, transcripts, vision]
+    D --> F[enrich<br/>faces, OCR, similar shots,<br/>frames, transcripts, vision]
     F --> E
     D --> G[places<br/>GPS to GeoNames]
     G --> E
-    H[corrections/organization.jsonl<br/>names, tags, albums, date fixes] --> E
+    H[corrections/organization.jsonl<br/>names, tags, buckets, trips, date fixes] --> E
 ```
 
 **Scan** walks each source, records every image and video, hashes its contents and asks
@@ -65,51 +65,65 @@ produced it, so two model versions can never be confused in one catalog.
 are resized copies in `.catalog/previews`; the originals are opened read-only and never
 touched.
 
-**Corrections** are yours. Naming a person, tagging a photo, fixing a date or building an
-album appends a line to `corrections/organization.jsonl`, keyed by content hash. Delete the
+**Corrections** are yours. Naming a person, tagging a photo, fixing a date, saving a trip or
+filling a bucket appends a line to `corrections/organization.jsonl`, keyed by content hash. Delete the
 whole `.catalog/` folder, rescan, and every correction comes back. That one file is the thing
 to back up alongside your photos.
 
 ## What you get
 
-### Places and trips
+### One search box
+
+Type a name, a place, a date, a camera, a word from a sign in a photo, or a file name. The
+suggestions name what matched and where it came from; Enter searches everything and groups
+the results by kind. Add the SigLIP2 weights and you can also type "dog on a beach" and get
+matching photos, computed on your GPU or CPU, with your corrections ("that is not a dog")
+kept as reviews.
+
+![Search results for Tokyo: the matching place card, then the twelve files taken there](docs/images/search.png)
+
+### Places, map and trips
 
 GPS coordinates are grouped into small areas and resolved against an offline GeoNames
 snapshot, so "Near Paris 04 Hôtel-de-Ville" comes from a 14 MB table on disk, not a web
-call. Runs of days away from home become suggested trips you can name and save.
+call. The map is Natural Earth, stored with the app. Runs of days away from home become
+suggested visits you can review, name and save as trips.
 
 ![Places: one card per area with the nearest settlement, region and country](docs/images/places.png)
 
-![Trips: suggested visits grouped from dates and places, with Browse and Save as trip](docs/images/trips.png)
+![Map: an offline world map with grouped photo dots and the named areas beside it](docs/images/map.png)
+
+![Trips: saved trips and suggested visits drawn on the map, with cards for each](docs/images/trips.png)
 
 ### Every file, with its evidence
 
 Each date shows where it came from (EXIF, container creation time, file modification) and
 whether the timezone is known. The detail panel lists the camera, the raw coordinates, the
-file size, and offers similar-version lookup and person tagging.
+file size and the path on disk, offers favorite, hide and bucket actions, and shows the
+faces found in the photo so you can name them in place.
 
-![Detail panel: date with its source, location, camera, file, similar versions and people](docs/images/detail.png)
-
-### Archive quality
-
-A running audit of what the catalog knows and does not: files with no date, dates that
-disagree between sources, files with no location, verified copies, and metadata errors.
-Nothing here removes a file; it only shows you where the gaps are.
-
-![Archive quality: counts for missing dates, dates to review, missing locations, verified copies and metadata errors](docs/images/quality.png)
-
-### Search
-
-Filenames and dates work with no models. Add Tesseract and text inside photos becomes
-searchable. Add faster-whisper and spoken words in videos do. Add the SigLIP2 weights and
-you can type "dog on a beach" and get matching photos, computed on your GPU or CPU, with
-your corrections ("that is not a dog") kept as reviews.
+![Detail panel: date with its source, location, camera, file, path on disk and the people found](docs/images/detail.png)
 
 ### People
 
 Faces are detected and grouped locally with OpenCV's YuNet and SFace models. The vault
-suggests groups; you supply names. A name is a correction, never a model output, and it
-survives a rebuild or a change of face model.
+suggests groups; you supply names, merge groups, hide people you do not want to see. A name
+is a correction, never a model output, and it survives a rebuild or a change of face model.
+
+### Buckets and similar shots
+
+Buckets are your own collections, kept in the corrections file. Similar shots stacks
+near-duplicates and bursts so the grid shows one of each; the stack is a view, and nothing is
+deleted or hidden for good.
+
+### Archive quality and filling the gaps
+
+A running audit of what the catalog knows and does not: files with no date, dates that
+disagree between sources, files with no location, verified copies, and metadata errors.
+"Fill the gaps" proposes dates and places from the archive's own evidence, a group at a
+time, and writes nothing until you accept.
+
+![Archive quality: counts for missing dates, dates to review, missing locations, verified copies and metadata errors](docs/images/quality.png)
 
 ## Optional models
 

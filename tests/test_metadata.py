@@ -7,11 +7,12 @@ import zipfile
 
 from src import catalog, imports, metadata
 from src.kit import validate_row
+from tests.scratch import scratch
 
 
 class MetadataTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
+        self.root = scratch()
         self.source, self.exports = self.root/'source', self.root/'exports'
         self.source.mkdir()
         self.exports.mkdir()

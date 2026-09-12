@@ -62,16 +62,12 @@ background rather than trusting a number nobody took. Indexing resumes from its
 checkpoint, so it does not need to finish in one sitting.
 
 **With a GPU.** SigLIP2 moves to CUDA automatically when `torch.cuda.is_available()`,
-with no flag to set. The two models below become available.
+with no flag to set. The model below becomes available.
 
-## The two models this script does not download
+## The one model this script does not download
 
-Qwen3-VL descriptions and MUSIQ quality scoring are GPU-only, large, and not
-pinned by this repo, so you place them by hand.
-
-**MUSIQ** needs no receipt. Put `musiq_koniq_ckpt-e95806b9.pth` in a folder and
-point `--model` at it. `src/quality.py` checks the file against a hardcoded
-SHA-256 (`e95806b9eae5...`) and refuses to start without CUDA.
+Qwen3-VL descriptions are GPU-only, large, and not pinned by this repo, so you place the
+weights by hand under `models/qwen3-vl`.
 
 **Qwen3-VL** needs an `acquisition.json` beside the weights, in the same shape
 the Whisper receipt uses. `src/descriptions.py` hashes every listed file and

@@ -22,8 +22,7 @@ def observations(path):
         compatible=conn.execute("SELECT value FROM settings WHERE key='frames_compatible'").fetchone()
         models=json.loads(compatible[0]) if compatible else ([current[0]] if current else [])
         rows=[dict(r) for r in conn.execute('SELECT * FROM frame_facts WHERE sampler IN ('+','.join('?' for _ in models)+')',models)] if models else []
-        from .frame_gap_work import observations as gap_observations
-        return rows+gap_observations(conn),roots
+        return rows,roots
 
 
 def sample_path(directory,row):

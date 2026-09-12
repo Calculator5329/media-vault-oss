@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 VENV_PYTHON = ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 MODEL_FOLDERS = {'faces': 'face_models', 'whisper-small': 'transcript_model', 'siglip2': 'vision_model',
-                 'qwen3-vl': 'description_model', 'musiq': 'quality_model'}
+                 'qwen3-vl': 'description_model'}
 
 
 def in_project_venv():
@@ -99,7 +99,7 @@ def serve(config, rest):
     if not (state / 'catalog.db').is_file():
         print('No catalog yet. Run: python vault.py scan', file=sys.stderr)
         return 1
-    args = [sys.executable, '-m', 'src.server', '--database', state / 'catalog.db', '--config', config['path'], '--port', config['port']]
+    args = [sys.executable, '-m', 'src.server', '--database', state / 'catalog.db', '--port', config['port']]
     if (state / 'imports.db').is_file():
         args += ['--imports', state / 'imports.db']
         vision = config['models_dir'] / 'siglip2'
@@ -125,14 +125,10 @@ def resources_for(config):
             continue
         if key in ('vision_model', 'description_model') and not have_vision:
             continue
-        if key == 'quality_model' and not importable('pyiqa'):
-            continue
         resources[key] = str(path)
     resources['face_python'] = resources['audio_python'] = sys.executable
     if have_vision:
         resources['vision_python'] = sys.executable
-    if 'quality_model' in resources:
-        resources['quality_python'] = sys.executable
     return resources
 
 
