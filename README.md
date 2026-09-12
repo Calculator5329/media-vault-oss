@@ -9,8 +9,9 @@ are never moved, renamed or written to. No image ever leaves the machine.
 
 Optional local AI adds faces, text in photos, image search by description, video transcripts
 and scene previews. Each is a model you download once and run offline. Skip any of them and
-the rest of the vault works the same. The screenshots on this page come from a synthetic
-test library of generated images, which is why the "photos" are coloured shapes.
+the rest of the vault works the same. The screenshots on this page come from a test library
+of CC0 photos from Wikimedia Commons, stamped with made-up dates and GPS so the trips and
+places have something to show. None of it is anyone's real library.
 
 ## Set it up with an agent
 
