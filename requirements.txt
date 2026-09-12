@@ -1,0 +1,8 @@
+# Base runtime: catalog, viewer, faces, OCR, fingerprints, video frames, transcripts.
+# Vision search and descriptions need requirements-vision.txt on top.
+Pillow>=11,<13
+numpy>=2,<3
+opencv-python-headless>=4.10,<6
+onnxruntime>=1.19,<2
+faster-whisper>=1.1,<2
+av>=13,<16

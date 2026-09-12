@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+*.sqlite
+*.db
+.catalog/
+.index/
+models/
+vault.config.json
+corrections/organization.jsonl
+corrections/source-config-history/
+evidence/local/
