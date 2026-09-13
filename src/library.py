@@ -226,10 +226,11 @@ class Library(Viewer):
             known={s['id'] for s in self.stacks()['stacks']}
             if data.get('stack') not in known:raise ValueError('Unknown stack')
         if op in ('add','remove','album'):
-            allowed={i['content_hash'] for i in self.items if i['kind']=='photo' and i['content_hash']}
+            kinds=('photo',) if op=='album' else ('photo','video')  # a person can be tagged on a whole video; albums stay photos
+            allowed={i['content_hash'] for i in self.items if i['kind'] in kinds and i['content_hash']}
             contents=data.get('contents')
             if not isinstance(contents,list) or any(not isinstance(d,str) or d not in allowed for d in contents):
-                raise ValueError('Select verified photos from this library')
+                raise ValueError('Select verified photos from this library' if op=='album' else 'Select verified photos or videos from this library')
         if op=='exclude_trip':
             allowed={i['content_hash'] for i in self._select(trip=data.get('trip',''))}
             contents=data.get('contents')

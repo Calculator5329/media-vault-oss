@@ -158,3 +158,10 @@ class VideoFaceTests(unittest.TestCase):
         library.organize('faces',{'person':person,'faces':[{'face_id':found[0]['face_id'],'content_hash':video['content_hash']}]})
         self.assertIn(video['id'],[i['id'] for i in library.search(person=person)['items']],'a named video face puts the video in that person\'s results')
         self.assertEqual(library.people()['people'][0]['count'],1)
+        # Tagging the whole video, the detail panel's "Add a person", and removing it again.
+        other=library.organize('person',{'person':'','name':'Grandpa'})['data']['person']
+        library.organize('add',{'person':other,'contents':[video['content_hash']]})
+        self.assertIn(video['id'],[i['id'] for i in library.search(person=other)['items']])
+        library.organize('remove',{'person':other,'contents':[video['content_hash']]})
+        self.assertEqual(library.search(person=other)['total'],0)
+        with self.assertRaises(ValueError):library.organize('album',{'album':'','name':'x','contents':[video['content_hash']]})
