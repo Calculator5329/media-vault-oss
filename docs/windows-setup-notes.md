@@ -82,6 +82,17 @@ second torch process while enrichment is running.
 `bos_token_id must be None or an integer within the vocabulary ... got 49406` twice at
 load. Search results were correct. Harmless, but noisy.
 
+### Python text-mode writes turn the LF repo into CRLF
+
+The repository stores LF line endings. Any Python that edits a source file with
+`open(path, 'w')` on Windows writes CRLF, because text mode translates `\n` on write.
+Our first two fix commits were made that way and came out as whole-file diffs (every
+line changed) even though each fix touched three lines. We rebuilt the commits from
+LF content and set `git config core.autocrlf input` in the clone so git normalises on
+commit. An agent editing files on Windows should write with `newline='\n'` or in
+binary mode. Upstream could add a `.gitattributes` with `* text=auto eol=lf` so a
+Windows contributor cannot ship CRLF by accident.
+
 ### Git on an exFAT external drive
 
 exFAT records no file ownership, so every git command fails with
