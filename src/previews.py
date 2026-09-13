@@ -49,7 +49,8 @@ competes with request threads for the interpreter lock. Ends with the viewer."""
     def start(self):
         import subprocess,sys
         args=[sys.executable,'-m','src.previews','--database',str(self.library.catalog_database),'--imports',str(self.library.import_database),'--workers',str(self.workers)]
-        self.process=subprocess.Popen(args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,preexec_fn=lambda:os.nice(15),cwd=str(Path(__file__).resolve().parents[1]))
+        low=({'creationflags':subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name=='nt' else {'preexec_fn':lambda:os.nice(15)})  # preexec_fn is Unix only
+        self.process=subprocess.Popen(args,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,cwd=str(Path(__file__).resolve().parents[1]),**low)
         return self
     def running(self):return self.process is not None and self.process.poll() is None
 
