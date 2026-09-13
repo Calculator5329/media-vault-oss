@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-09-13
+
+Faces in videos.
+
+- The face pass runs over the retained video samples as well as photos, so naming a face puts
+  the person's videos in their results. One face per distinct person per video, strongest
+  detection kept. The detail panel shows each video face with the time it was seen, and the
+  face chip is cropped from the sample rather than decoded from the video.
+- `face_work` gained a `kind` column, added in place on existing stores, so a file that was
+  scanned as a photo and later verified as a video is redone from its samples. Photo face
+  identities are unchanged, so existing names carry over.
+- People, untagged and candidate counts include videos; the tag and select controls accept
+  videos.
+- Verified: 264 unit tests (two new), and a face pass over a 1,556-file library on Windows 11.
+
 ## 2026-09-12, later
 
 The viewer and its server code now come from the private vault's current UI branch, not the

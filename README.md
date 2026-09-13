@@ -109,6 +109,9 @@ faces found in the photo so you can name them in place.
 Faces are detected and grouped locally with OpenCV's YuNet and SFace models. The vault
 suggests groups; you supply names, merge groups, hide people you do not want to see. A name
 is a correction, never a model output, and it survives a rebuild or a change of face model.
+Videos get the same treatment: the face pass reads the keyframes the frame sampler keeps, one
+face per person per video, so naming a face brings that person's videos into their results,
+and the detail panel says when in the video each face was seen.
 
 ### Buckets and similar shots
 

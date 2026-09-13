@@ -26,8 +26,9 @@ class MediaTypeTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT kind FROM occurrences WHERE content_hash=?',(digest,)).fetchone()[0],'video')
             self.assertEqual(media_types.recover(conn,vision,f.f.root/'probe-cache')['reclassified'],0)
         rebuilt=Library(f.f.catalog,f.f.db,organization=v.organization.path)
+        # Videos are face candidates too, but the work recorded while this file passed as a photo does not count: the next face pass redoes it from its samples.
         self.assertEqual(rebuilt.face_review()['processed_photos'],3)
-        self.assertEqual(rebuilt.face_review()['candidate_photos'],3)
+        self.assertEqual(rebuilt.face_review()['candidate_photos'],4)
         item=rebuilt.by_content[digest];self.assertEqual(item['kind'],'video');self.assertEqual(item['name'],'misnamed.jpg');self.assertEqual(item['extension'],'.jpg')
         fact=rebuilt.metadata(item['id'])['detected_type'];self.assertEqual(fact['original_kind'],'photo');self.assertEqual(fact['detected_kind'],'video')
         self.assertEqual(path.read_bytes(),before)
