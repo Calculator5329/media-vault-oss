@@ -14,12 +14,12 @@ class Gazetteer:
     def __init__(self,root):
         import numpy as np
         root=Path(root);self.np=np;self.rows=[]
-        receipt=json.loads((root/'acquisition.json').read_text())
+        receipt=json.loads((root/'acquisition.json').read_text(encoding='utf-8'))
         for record in receipt['files']:
             if hashlib.sha256((root/record['file']).read_bytes()).hexdigest()!=record['sha256']:raise ValueError('Gazetteer changed')
         self.identity=hashlib.sha256(json.dumps(receipt['files'],sort_keys=True).encode()).hexdigest()
-        regions={row[0]:row[1] for line in (root/'admin1CodesASCII.txt').read_text().splitlines() if len(row:=line.split('\t'))>=2}
-        countries={row[0]:row[4] for line in (root/'countryInfo.txt').read_text().splitlines() if not line.startswith('#') and len(row:=line.split('\t'))>=5}
+        regions={row[0]:row[1] for line in (root/'admin1CodesASCII.txt').read_text(encoding='utf-8').splitlines() if len(row:=line.split('\t'))>=2}
+        countries={row[0]:row[4] for line in (root/'countryInfo.txt').read_text(encoding='utf-8').splitlines() if not line.startswith('#') and len(row:=line.split('\t'))>=5}
         with zipfile.ZipFile(root/'cities500.zip') as archive:
             with archive.open('cities500.txt') as stream:
                 for line in io.TextIOWrapper(stream,encoding='utf-8'):
