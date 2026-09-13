@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Media Vault launcher. Works the same on Windows and Linux; run it from the repo root.
 
+    python vault.py setup FOLDER    set everything up for that folder of photos, end to end
     python vault.py                 start the viewer (http://127.0.0.1:8770 by default)
     python vault.py scan            inventory the sources, verify content, attach metadata
     python vault.py scan --watch    keep scanning for new files every 15 minutes
     python vault.py enrich          run the optional local AI stages for the models present
+    python vault.py enrich --until-complete
+                                    the same, repeated until no stage has anything left
     python vault.py places          label places from the downloaded GeoNames snapshot
     python vault.py doctor          what is installed, what is configured, what fits this machine
     python vault.py setup-models    download optional models (--faces --whisper --vision --gazetteer)
@@ -163,13 +166,15 @@ def places(config, rest):
 def main(argv):
     if VENV_PYTHON.is_file() and not in_project_venv():
         return subprocess.call([str(VENV_PYTHON), str(ROOT / 'vault.py'), *argv], cwd=ROOT)
-    command = argv[0] if argv and not argv[0].startswith('-') else 'serve'
-    rest = argv[1:] if command != 'serve' else argv
-    if command in ('-h', '--help', 'help'):
+    if argv and argv[0] in ('-h', '--help', 'help'):
         print(__doc__)
         return 0
+    command = argv[0] if argv and not argv[0].startswith('-') else 'serve'
+    rest = argv[1:] if command != 'serve' else argv
     if command == 'doctor':
         return run([sys.executable, ROOT / 'scripts/doctor.py', *rest])
+    if command == 'setup':
+        return run([sys.executable, ROOT / 'scripts/setup.py', *rest])
     if command == 'setup-models':
         return run([sys.executable, ROOT / 'scripts/setup_models.py', *rest])
     if command == 'test':

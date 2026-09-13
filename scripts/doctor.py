@@ -25,13 +25,16 @@ import urllib.request
 from contextlib import closing
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tools  # noqa: E402  sibling module, standard library only, see scripts/tools.py
+
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / 'vault.config.json'
 EXAMPLE_PATH = ROOT / 'vault.config.example.json'
 
 # Every key the config may carry, with the value used when the key is absent. Anything else is an error.
-DEFAULTS = {'sources': [], 'exports': None, 'tier': 'personal',
-            'state_dir': '.catalog', 'models_dir': 'models', 'port': 8770, 'external_roots': None}
+DEFAULTS = {'sources': [], 'exports': None, 'tier': 'personal', 'state_dir': '.catalog',
+            'models_dir': 'models', 'port': 8770, 'external_roots': None, 'tool_paths': None}
 BASE_PACKAGES = [('PIL', 'Pillow'), ('numpy', 'numpy'), ('cv2', 'opencv-python-headless'),
                  ('onnxruntime', 'onnxruntime'), ('faster_whisper', 'faster-whisper'), ('av', 'av')]
 OPTIONAL_PACKAGES = [('torch', 'vision search, video moments, descriptions'),
@@ -130,6 +133,15 @@ def validate_config(data, root=ROOT):
     port = settings['port']
     if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
         errors.append(f'port must be a number between 1024 and 65535, found {port!r}')
+    tool_dirs, configured = [], settings['tool_paths']
+    if configured is not None:
+        if not isinstance(configured, list) or not all(isinstance(p, str) and p.strip() for p in configured):
+            errors.append('tool_paths must be a list of folder paths, or null')
+        else:
+            for entry in configured:
+                folder = Path(entry).expanduser()
+                tool_dirs.append((folder if folder.is_absolute() else root / folder).resolve())
+
     configured_roots = settings['external_roots']
     if configured_roots is not None and (not isinstance(configured_roots, list)
                                          or not all(isinstance(p, str) for p in configured_roots)):
@@ -151,7 +163,7 @@ def validate_config(data, root=ROOT):
         if under_root(path, roots):
             errors.append(f'{key} {path} is on removable media; derived state must stay on the local drive')
 
-    settings.update(sources_resolved=resolved, exports_path=exports_path,
+    settings.update(sources_resolved=resolved, exports_path=exports_path, tool_dirs=tool_dirs,
                     state_path=derived['state_dir'], models_path=derived['models_dir'])
     return settings, errors
 
@@ -166,6 +178,31 @@ def load_config(path=CONFIG_PATH, root=ROOT):
         return validate_config(json.loads(path.read_text(encoding='utf-8')), root)
     except (OSError, ValueError) as exc:
         return validate_config({}, root)[0], [f'{path.name} could not be read: {exc}']
+
+
+def enrichment_progress(state_path):
+    """Last recorded event per enrichment stage: {stage: {state, remaining, processed}}.
+
+Read straight from the events file rather than through src.enrichment, because the doctor
+runs before anything is installed and must not import the package."""
+    path = Path(state_path) / 'enrichment-events.jsonl'
+    stages = {}
+    if not path.is_file():
+        return stages
+    try:
+        text = path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return stages
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+            stage = event['stage']
+        except (ValueError, KeyError, TypeError):
+            continue
+        result = event.get('result') or {}
+        stages[stage] = {'state': event.get('state'), 'remaining': result.get('remaining'),
+                         'processed': result.get('processed_this_run'), 'at': event.get('at')}
+    return stages
 
 
 def count(database, sql):
@@ -240,6 +277,16 @@ def collect(settings, errors):
     def add(name, status, detail):
         rows.append({'name': name, 'status': status, 'detail': detail})
 
+    # vault.py puts these on PATH for every command it runs; do the same here so the tool
+    # rows below report what a real run would find, not what this shell happens to see.
+    configured = settings.get('tool_dirs') or []
+    if configured:
+        missing = [d for d in configured if not Path(d).is_dir()]
+        tools.extend_path([d for d in configured if Path(d).is_dir()])
+        add('tool paths', 'WARN' if missing else 'OK',
+            ('these vault.config.json tool_paths folders are gone: ' + ', '.join(str(d) for d in missing))
+            if missing else 'on PATH from vault.config.json: ' + ', '.join(str(d) for d in configured))
+
     supported = (3, 11) <= sys.version_info[:2] <= (3, 13)
     add('python', 'OK' if supported else 'WARN', f'{platform.python_version()} at {sys.executable}' + (
         '' if supported else '; onnxruntime and ctranslate2 wheels may not exist outside 3.11 to 3.13'))
@@ -271,24 +318,30 @@ def collect(settings, errors):
                 detail += ', CUDA state unknown'
         add(f'package {module}', 'OK', detail)
 
+    def off_path(binary, install):
+        """What to do about a tool PATH cannot see: add a folder, or install the package."""
+        folder = tools.locate(binary)
+        return (f'installed at {folder} but that folder is not on PATH; '
+                f'run python scripts/setup.py --repair-path, or add it to PATH yourself') if folder else \
+            f'not on PATH; {install}'
+
     for binary in ('ffmpeg', 'ffprobe'):
         found = shutil.which(binary)
         version = re.search(rf'{binary} version \S+', run([binary, '-version'])) if found else None
         add(binary, 'OK' if found else 'MISSING', f'{found} ({version.group(0) if version else "version unknown"})'
-            if found else 'not on PATH; install ffmpeg')
+            if found else off_path(binary, 'install ffmpeg'))
 
     identify, magick = shutil.which('identify'), shutil.which('magick')
-    if identify:
-        add('imagemagick', 'OK', f'identify at {identify}' + (f', magick at {magick}' if magick else ''))
-    elif magick:
-        add('imagemagick', 'WARN',
-            f'only magick at {magick}; src/probe.py calls identify, so the launcher needs an identify shim')
+    if identify or magick:
+        add('imagemagick', 'OK', f'identify at {identify}, magick at {magick}' if identify and magick else
+            f'identify at {identify}' if identify else
+            f'magick at {magick}; src/probe.py calls magick identify when identify is absent, as on Windows')
     else:
-        add('imagemagick', 'MISSING', 'neither identify nor magick on PATH; install ImageMagick')
+        add('imagemagick', 'MISSING', off_path('magick', 'install ImageMagick'))
 
     data = tessdata_english()
     if not shutil.which('tesseract'):
-        add('tesseract', 'MISSING', 'not on PATH; install tesseract for photo text search')
+        add('tesseract', 'MISSING', off_path('tesseract', 'install tesseract for photo text search'))
     elif data is None:
         add('tesseract', 'MISSING', f'{run(["tesseract", "--version"])}, but eng.traineddata was not found; '
                                     'install the English data or set TESSDATA_PREFIX')
@@ -313,6 +366,15 @@ def collect(settings, errors):
         verified = count(imports_db, 'SELECT count(*) FROM occurrences WHERE present=1 AND content_hash IS NOT NULL')
         add('state', 'OK', f'scanned: {files if files is not None else "unknown"} files across {len(settings["sources_resolved"])} source(s)'
             + (f', {verified} verified contents' if verified is not None else ', imports.db not built yet'))
+
+    stages = enrichment_progress(settings['state_path'])
+    if stages:
+        left = {s: v['remaining'] for s, v in stages.items() if isinstance(v['remaining'], int)}
+        errored = sorted(s for s, v in stages.items() if v['state'] == 'error')
+        detail = ', '.join(f'{s} {n} remaining' for s, n in sorted(left.items())) or 'no stage has reported a count yet'
+        if errored:
+            detail += f'; last pass failed for {", ".join(errored)} (see {settings["state_path"] / "worker-logs"})'
+        add('enrichment', 'WARN' if errored else 'OK', detail)
 
     for name, unlocks in MODELS:
         folder = settings['models_path'] / name

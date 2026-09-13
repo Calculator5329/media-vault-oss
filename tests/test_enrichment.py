@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 from src.enrichment import Supervisor,exclusive,status,command,run_worker,RESOURCES
+from tests.platform import requires_symlinks
 from tests.scratch import scratch
 
 class EnrichmentTests(unittest.TestCase):
@@ -27,6 +28,21 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(len(calls),16)
         self.assertTrue(all(str(self.directory/'imports.db') in c for c in calls))
         self.assertEqual(len((self.directory/'enrichment-events.jsonl').read_text().splitlines()),32)
+
+    def test_until_complete_repeats_each_stage_until_the_backlog_stops_shrinking(self):
+        """--until-complete keeps going past one bounded pass, and gives up on a stage that stalls."""
+        passes=[]
+        def drains(args,*rest):
+            passes.append(args[2])
+            return {'state':'complete','result':{'remaining':[5,2,0][min(passes.count(args[2])-1,2)]}}
+        Supervisor(self.root,self.directory,self.resources,[self.source],runner=drains).run(until_complete=True)
+        self.assertEqual(len(passes),24)
+        self.assertEqual({e['result']['remaining'] for e in status(self.directory)['stages'].values()},{0})
+
+        stuck=[]
+        def stalls(args,*rest):stuck.append(args[2]);return {'state':'complete','result':{'remaining':5}}
+        Supervisor(self.root,self.directory,self.resources,[self.source],runner=stalls).run(until_complete=True)
+        self.assertEqual(len(stuck),16)
 
     def test_missing_source_waits_without_launch_or_source_write(self):
         def forbidden(*args):self.fail('Worker ran against missing source')
@@ -54,6 +70,7 @@ class EnrichmentTests(unittest.TestCase):
             self.assertEqual(args[2],'src.'+stage)
         self.assertIn('--publish-groups',command('faces',self.directory,self.resources,30,10))
 
+    @requires_symlinks
     def test_virtual_environment_executable_symlink_is_not_collapsed(self):
         executable=self.root/'venv/bin/python';executable.parent.mkdir(parents=True)
         executable.symlink_to(sys.executable)

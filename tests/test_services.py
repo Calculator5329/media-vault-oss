@@ -4,8 +4,10 @@ from pathlib import Path
 import tempfile
 import unittest
 from src.services import render,quoted
+from tests.platform import requires_systemd_platform
 from tests.scratch import scratch
 
+@requires_systemd_platform
 class ServiceTests(unittest.TestCase):
     def test_runtime_paths_and_source_spaces_survive_rendering(self):
         root=scratch();repo=root/'synthetic repo';repo.mkdir()

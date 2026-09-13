@@ -13,17 +13,29 @@ the rest of the vault works the same. The screenshots on this page come from a t
 of CC0 photos from Wikimedia Commons, stamped with made-up dates and GPS so the trips and
 places have something to show. None of it is anyone's real library.
 
-## Set it up with an agent
+## Set it up
 
-Clone the repo and open it in Claude Code (or any coding agent that reads `CLAUDE.md` or
-`AGENTS.md`), then say:
+Clone the repo, then run one command from its folder with whatever Python you have:
 
-> Set up Media Vault for the photos in this folder.
+```
+python vault.py setup "D:\Pictures"
+```
 
-The agent runs the doctor, installs the command-line tools for your OS, creates the Python
-environment, writes the config with your folder, runs the first scan and hands you the URL.
-Windows 11 and Arch-based Linux (CachyOS) are the tested targets; other Linux distributions
-differ only in the package manager commands.
+Name the folder your pictures and videos are in, nested folders and all. It installs the
+command-line tools, builds the Python environment, writes the config, downloads the small
+models, scans the library, runs the AI passes until nothing is left, labels places from GPS,
+and prints the viewer URL. It skips whatever is already done, so running it again after a
+failure or a reboot carries on from there. Windows 11 and Arch-based Linux (CachyOS) are the
+tested targets.
+
+Or open the clone in Claude Code (or any coding agent that reads `CLAUDE.md` or
+`AGENTS.md`) and say:
+
+> Set up Media Vault for the photos in D:\Pictures.
+
+The agent runs that same command, watches it, answers the one or two questions it can raise
+(a password for the Linux package install, whether you want the several-GB image search
+model), and hands you the URL.
 
 ## Set it up by hand
 

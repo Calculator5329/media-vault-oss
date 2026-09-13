@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from src import catalog
+from tests.platform import requires_symlinks
 from tests.scratch import scratch, base as scratch_base
 
 
@@ -74,6 +75,7 @@ class FreshCatalogTests(unittest.TestCase):
                 catalog.inventory(self.source, self.conn)
         self.assertEqual(catalog.summary(self.conn)['files'], 1)
 
+    @requires_symlinks
     def test_inventory_retains_missing_rows_and_excludes_symlinks(self):
         image = self.source / 'photo.jpg'
         image.write_bytes(b'image')

@@ -1,7 +1,25 @@
 # Setup
 
-The agent path in `CLAUDE.md` runs these same steps. This page is for doing it by hand, or
-for checking what the agent did.
+## The short way
+
+```
+python vault.py setup "D:\Pictures"
+```
+
+One command, any Python 3, from the repository root. It installs the command-line tools,
+builds `.venv`, writes the config for that folder, downloads the small models, scans,
+enriches until every stage is empty, labels places, and prints the viewer URL. Each step
+checks whether it is already done, so running it again after a failure or a reboot carries
+on rather than starting over. `--vision` adds image search by description (several GB),
+`--models none` skips the downloads, `--no-enrich` stops after the scan, `--serve` leaves
+the viewer running, `--json` prints a line per step for a script or an agent to read.
+
+On Linux the tool install needs a password, so setup prints the `pacman`/`apt`/`dnf` line
+and asks you to run it. On Windows it uses winget and each of the three packages raises one
+UAC prompt; dismissing one is the usual cause of a failed install, and running setup again
+fixes it.
+
+The rest of this page is the same work by hand, and what to check when a step misbehaves.
 
 ## 1. Command-line tools
 
@@ -32,9 +50,17 @@ sudo apt install ffmpeg imagemagick tesseract-ocr tesseract-ocr-eng python3-venv
 winget install --id Python.Python.3.13 --id Gyan.FFmpeg --id ImageMagick.ImageMagick --id UB-Mannheim.TesseractOCR
 ```
 
-Open a new terminal afterwards so PATH updates. ImageMagick 7 on Windows has no `identify`
-shim; the code calls `magick identify` when `identify` is absent. Tesseract installs to
-`C:\Program Files\Tesseract-OCR`; add that folder to PATH if `tesseract --version` fails.
+Each of those raises one UAC prompt. Dismissing it fails that install with
+`0x800704c7: The operation was canceled by the user`; running the same command again works.
+
+Open a new terminal afterwards so PATH updates. If a tool is installed but nothing can find
+it, `python vault.py setup --repair-path` looks in the folders those installers use, records
+what it finds under `tool_paths` in `vault.config.json`, and every later command puts those
+folders on PATH for itself. Your system PATH is left alone.
+
+ImageMagick 7 on Windows has no `identify` shim; the code calls `magick identify` when
+`identify` is absent. Tesseract installs to `C:\Program Files\Tesseract-OCR`, which its
+installer does not add to PATH: add it yourself, or let `--repair-path` record it.
 The tessdata folder is found automatically there and in the usual Linux and Homebrew
 locations; set `TESSDATA_PREFIX` if yours is somewhere else.
 
@@ -76,7 +102,8 @@ cp vault.config.example.json vault.config.json
   "state_dir": ".catalog",
   "models_dir": "models",
   "port": 8770,
-  "external_roots": null
+  "external_roots": null,
+  "tool_paths": null
 }
 ```
 
@@ -85,6 +112,9 @@ cp vault.config.example.json vault.config.json
 - `exports`: an unpacked Google Takeout folder, if you have one. Otherwise `null`.
 - `state_dir`, `models_dir`: where derived state and models go. Relative paths are relative to
   the repo. They must be on a local drive and must not be inside a source.
+- `tool_paths`: folders put on PATH before ffmpeg, ImageMagick or Tesseract are called.
+  `null` means none. `setup --repair-path` fills this in on Windows when an installer did
+  not touch PATH.
 - `external_roots`: where removable drives mount. `null` means `/mnt`, `/run/media` and
   `/media` on Linux and nothing on Windows. Derived state is refused under these roots so an
   unplugged drive never takes the catalog with it.
@@ -111,13 +141,16 @@ Windows service yet; keep the watch command in a terminal.
 python vault.py setup-models --faces --gazetteer      # people and places, 53 MB
 python vault.py setup-models --whisper                 # video transcripts, 486 MB
 python vault.py setup-models --vision                  # image search, 1.5 GB, needs torch
-python vault.py enrich --once
+python vault.py enrich --until-complete
 python vault.py places
 ```
 
 `docs/models.md` lists every model, its source, license and checksum. `enrich` runs only the
 stages whose runtime and model are both present and says which at start. `enrich` with no
-flags keeps running and picks up new files; `--once` does one pass.
+flags keeps running and picks up new files; `--once` does one bounded pass per stage, which
+on a first run leaves plenty behind; `--until-complete` repeats each stage until its backlog
+is empty and then exits, which is what `vault.py setup` uses. `python vault.py doctor` prints
+what each stage has left.
 
 ## Troubleshooting
 
@@ -128,3 +161,5 @@ flags keeps running and picks up new files; `--once` does one pass.
 - `Another scan owns this catalog`: a `scan --watch` or a service is already running.
 - Tesseract found but OCR stage missing: run `tesseract --list-langs`; `eng` must be listed.
 - Windows: if `python` opens the Microsoft Store, use `py` instead.
+- Windows: tests that need a symbolic link, a case-sensitive filesystem or systemd skip
+  themselves there. A skip is the platform, not a broken install.

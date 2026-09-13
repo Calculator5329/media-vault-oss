@@ -1,6 +1,7 @@
 import hashlib,tempfile,unittest
 from pathlib import Path
 from src.export import Exporter,safe_name
+from tests.platform import requires_case_sensitive_filesystem
 from test_library import LibraryTests
 
 class ExportTests(unittest.TestCase):
@@ -42,6 +43,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(safe_name('n'*200,'x')),80)
 
 
+    @requires_case_sensitive_filesystem
     def test_missing_parent_names_the_folder_suggests_case_twin_and_can_create(self):
         library=self.build();exporter=Exporter()
         with tempfile.TemporaryDirectory() as tmp:

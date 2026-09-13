@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-13, later
+
+One command sets the whole thing up, and the Windows field report's rough edges are gone.
+
+- `python vault.py setup "D:\Pictures"` runs the whole path: command-line tools, `.venv`,
+  `vault.config.json`, the small models, the scan, enrichment to completion, place names, and
+  the doctor's verdict with the viewer URL. Any Python 3 starts it. Every step measures before
+  it acts, so a second run after a failure, a reboot or a Ctrl+C carries on rather than
+  starting over. `--vision`, `--models`, `--no-enrich`, `--serve` and `--json` are the flags.
+  On Windows it installs the three winget packages itself; on Linux it prints the one
+  `pacman`/`apt`/`dnf` line that needs a password and stops.
+- `tool_paths` in `vault.config.json`: folders put on PATH for every command the vault runs.
+  `python vault.py setup --repair-path` finds a tool an installer left off PATH (the
+  UB-Mannheim Tesseract package always does this) and records it. The system PATH is not
+  touched.
+- `enrich --until-complete` repeats every stage until its backlog is empty and then exits,
+  and stops a stage that no longer shrinks its backlog. `--once` was one bounded pass per
+  stage, which on a first run left most of the library behind.
+- The doctor reports what each enrichment stage has left to process, names the folder to add
+  when a tool is installed but off PATH, and no longer warns about a missing `identify` that
+  `src/probe.py` already handles by calling `magick identify`.
+- Tests that need a symbolic link, a case-sensitive filesystem or systemd now skip themselves
+  where the platform cannot do it, measured at run time rather than assumed from the OS name.
+  `.gitattributes` keeps the tree LF so a Windows clone cannot commit CRLF.
+- Verified: 265 unit tests, and a fresh clone on Arch Linux taken from nothing to a served
+  catalog by the one command in 39 seconds, then re-run to 4 seconds with everything already
+  in place. The Windows path is built from the field report in `docs/windows-setup-notes.md`
+  and has not been run on Windows yet.
+
 ## 2026-09-13
 
 Faces in videos.

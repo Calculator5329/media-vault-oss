@@ -1,0 +1,7 @@
+# Python, JSON and the web assets are text: keep LF everywhere so a Windows clone cannot
+# commit CRLF whole-file diffs. Model and image fixtures stay binary.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.onnx binary
+*.zip binary

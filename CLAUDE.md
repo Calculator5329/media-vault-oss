@@ -6,42 +6,71 @@ private viewer on localhost. Nothing is uploaded anywhere. The originals are rea
 this program. Everything it derives is rebuildable and lives under `.catalog/`.
 
 Your job is to get `python vault.py doctor` to print `READY`, run the first scan to
-completion, and hand over a viewer URL that shows their photos. Read `docs/setup.md` for the
-platform commands and `docs/models.md` for the optional models.
+completion, and hand over a viewer URL that shows their photos. `python vault.py setup
+<their photo folder>` does all of that in one command; the rest of this file is what to ask
+first, what to do when a step stops, and the lines you must not cross.
 
 ## The procedure
 
-1. **Measure first.** Run `python vault.py doctor` (any Python 3 works for this first run).
-   It reports Python, the venv, packages, the four command-line tools, the config, which
-   models are present, and GPU memory. Every later step fixes one `MISSING` line.
-2. **Command-line tools.** `ffmpeg`, `ffprobe`, ImageMagick (`magick` or `identify`) and
-   Tesseract with English data. `docs/setup.md` has the `pacman`, `apt` and `winget` lines.
-   Say what each package is before installing it.
-3. **Python 3.11 to 3.13 in `.venv`** at the repo root, then `pip install -r requirements.txt`.
-   Do not install `requirements-vision.txt` (torch) unless the person wants image search or
-   descriptions and the doctor reports a GPU or they accept CPU speed; it is several
-   gigabytes.
-4. **Configure.** Copy `vault.config.example.json` to `vault.config.json`. Ask the person
-   one question: which folder or folders hold their photos. Put absolute paths in `sources`.
-   A folder may be flat or a root with any hierarchy beneath it. Leave `state_dir` and
-   `models_dir` alone unless the repo sits on a small or removable drive; the catalog must be
-   on a local disk, and the doctor will say so if it is not.
-5. **Scan.** `python vault.py scan`. It prints one JSON line per cycle and ends with
-   "Scan complete". A large library takes a while: roughly a few hundred files a minute for
-   the metadata pass, because every file is hashed and probed once. Run it in the
-   background and report progress from its output rather than waiting silently.
-6. **Verify.** `python vault.py doctor` prints `READY`. `python vault.py test` passes
-   (unit tests, under a minute). Start `python vault.py` in the background, fetch
-   `http://127.0.0.1:8770/api/summary`, and confirm `files` matches what they expect. Then
-   stop it.
-7. **Optional models.** Offer, do not assume: `python vault.py setup-models --faces`
-   (39 MB, people), `--gazetteer` (14 MB, places), `--whisper` (486 MB, video
-   transcripts), `--vision` (1.5 GB plus torch, image search). Tell them the size before
-   each download. After any download run `python vault.py enrich --once` and, for places,
-   `python vault.py places`.
-8. **Hand over.** Start `python vault.py` and tell the person to open http://127.0.0.1:8770.
-   Give them the restart command, the `scan --watch` command for new files, and the one file
-   to back up: `corrections/organization.jsonl`.
+**One command does all of it.** Ask the person which folder holds their photos and videos,
+then run it from the repository root:
+
+```
+python vault.py setup "D:\Pictures"
+```
+
+Any Python 3 starts it; it builds the right environment itself. It installs the
+command-line tools, creates `.venv`, writes `vault.config.json`, downloads the small
+models, scans the library, runs enrichment until every stage is empty, labels places and
+ends with the doctor's verdict and the viewer URL. It prints a numbered step per phase,
+skips anything already done, and is safe to run again after a failure, a reboot, or a
+Ctrl+C: every step measures before it acts.
+
+Useful flags, all optional:
+
+- `--vision` also installs torch and SigLIP2 so photos can be searched by description.
+  Several GB; offer it when the doctor reports an NVIDIA GPU, and say the size first.
+- `--models none` skips the model downloads entirely (catalog, timeline and search still work).
+- `--no-enrich` stops after the scan, for a quick first look at a huge library.
+- `--serve` leaves the viewer running at the end instead of just printing the URL.
+- `--json` adds one JSON line per step, which is the easiest thing for you to report from.
+
+A long library scan and the enrichment pass both take real time. Run the command in the
+background and report progress from its output rather than waiting silently.
+
+### When a step stops
+
+The command stops at the first step it cannot finish and prints what to do. Two cases
+need you rather than a retry:
+
+- **Linux command-line tools.** Installing them needs a password, so setup prints the exact
+  `pacman`/`apt`/`dnf` line and stops. Show the person that line, let them run it, then run
+  setup again.
+- **Windows, tool installed but not found.** An installer that never touched PATH is the
+  usual cause. `python vault.py setup --repair-path` looks in the places those installers
+  use, records what it finds in `vault.config.json` under `tool_paths`, and every later
+  command picks it up. No system PATH is changed.
+
+Everything else is worth one retry before you dig: model downloads resume, the scan and
+every enrichment stage keep their own checkpoints.
+
+### Doing it step by step instead
+
+If the person wants to see each piece, or setup fails somewhere you need to work around,
+`docs/setup.md` has every command by hand and `docs/models.md` covers the models. The
+useful individual commands are `python vault.py doctor` (measure first, it reports Python,
+the venv, packages, the four tools, the config, enrichment progress and GPU memory),
+`scan`, `enrich --until-complete`, `places`, `setup-models`, and `test`.
+
+### Handing over
+
+Start `python vault.py`, confirm `http://127.0.0.1:8770/api/summary` reports the number of
+files the person expects, and tell them:
+
+- the URL, and that `python vault.py` is how they start it again;
+- `python vault.py scan --watch` to keep picking up new files;
+- the one file to back up: `corrections/organization.jsonl`, which holds every name, tag,
+  bucket and trip they created. `.catalog/` and `models/` are rebuildable; that file is not.
 
 ## Rules while you do this
 
@@ -52,6 +81,8 @@ platform commands and `docs/models.md` for the optional models.
 - Do not run anything with elevated privileges without saying what it installs and why.
   Package installs are the only steps that may need it.
 - Do not change ports, firewall rules, or other services. The server binds 127.0.0.1 only.
+- On Windows, write any file you edit with `newline='\n'` or in binary mode. Python's text
+  mode turns every `\n` into `\r\n`, which turns a three-line fix into a whole-file diff.
 - Do not modify files under `src/`, `web/` or `tests/` to make setup pass. Configuration
   belongs in `vault.config.json`. If the code needs a change for this machine, say so and
   stop; that is a bug report, not a local patch.

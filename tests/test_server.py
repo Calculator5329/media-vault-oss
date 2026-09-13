@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from src import catalog, server
+from tests.platform import requires_symlinks
 from tests.scratch import scratch
 
 
@@ -71,6 +72,7 @@ class ViewerTests(unittest.TestCase):
         (self.source/'a.jpg').write_bytes(b'changed')
         with self.assertRaises(FileNotFoundError):self.viewer.source_path(item['id'])
 
+    @requires_symlinks
     def test_source_symlink_is_refused(self):
         item=self.viewer.search(query='a.jpg')['items'][0]
         (self.source/'a.jpg').rename(self.root/'archive.jpg')

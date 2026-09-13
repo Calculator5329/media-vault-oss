@@ -137,22 +137,33 @@ class Supervisor:
         except Exception as exc:result={'state':'error','error':type(exc).__name__}
         return record(self.directory,stage,**result,log=log.name)
 
-    def queue(self,stages,once):
-        due={s:0 for s in stages}
+    def queue(self,stages,once,until_complete=False):
+        """Run each stage's bounded batches. ``once`` is one batch per stage; ``until_complete``
+repeats a stage until its backlog is empty, and drops it when a pass fails or stops
+reducing the backlog, so a file no worker can handle never becomes an endless loop."""
+        due={s:0 for s in stages};unfinished=set(stages);before={}
         while not self.stop.is_set():
             for stage in stages:
                 if self.stop.is_set():break
+                if until_complete and stage not in unfinished:continue
                 if time.monotonic()<due[stage]:continue
                 event=self.batch(stage)
-                delay=self.interval if event['state']=='complete' and event.get('result',{}).get('remaining',0)>0 else self.idle_interval
+                remaining=event.get('result',{}).get('remaining',0) if event['state']=='complete' else None
+                if until_complete:
+                    if remaining is None or remaining<=0 or remaining>=before.get(stage,remaining+1):unfinished.discard(stage)
+                    before[stage]=remaining;due[stage]=0;continue
+                delay=self.interval if remaining else self.idle_interval
                 due[stage]=time.monotonic()+delay
+            if until_complete:
+                if not unfinished:break
+                continue
             if once:break
             self.stop.wait(min(self.interval,max(.1,min(due.values())-time.monotonic())))
 
-    def run(self,once=False):
+    def run(self,once=False,until_complete=False):
         with exclusive(self.directory):
             with ThreadPoolExecutor(max_workers=len(self.roles)) as pool:
-                futures=[pool.submit(self.queue,stages,once) for stages in self.roles.values()]
+                futures=[pool.submit(self.queue,stages,once,until_complete) for stages in self.roles.values()]
                 try:
                     finished,_=wait(futures,return_when=FIRST_EXCEPTION)
                     for future in finished:future.result()
@@ -160,10 +171,11 @@ class Supervisor:
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--resources',type=Path,required=True);p.add_argument('--directory',type=Path,required=True);p.add_argument('--source',type=Path,action='append',required=True);p.add_argument('--seconds',type=int,default=300);p.add_argument('--limit',type=int,default=1000);p.add_argument('--interval',type=int,default=30);p.add_argument('--idle-interval',type=int,default=900);p.add_argument('--once',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--resources',type=Path,required=True);p.add_argument('--directory',type=Path,required=True);p.add_argument('--source',type=Path,action='append',required=True);p.add_argument('--seconds',type=int,default=300);p.add_argument('--limit',type=int,default=1000);p.add_argument('--interval',type=int,default=30);p.add_argument('--idle-interval',type=int,default=900);p.add_argument('--once',action='store_true');p.add_argument('--until-complete',action='store_true',help='Repeat every stage until nothing is left to process, then exit')
+    a=p.parse_args()
     supervisor=Supervisor(Path(__file__).resolve().parents[1],a.directory,json.loads(a.resources.read_text()),a.source,a.seconds,a.limit,a.interval,a.idle_interval)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:supervisor.stop.set())
-    try:supervisor.run(a.once)
+    try:supervisor.run(a.once,a.until_complete)
     except BlockingIOError:p.error('Another enrichment supervisor owns this catalog')
 
 

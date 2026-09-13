@@ -4,7 +4,8 @@ Open work is a checkbox. Shipped work moves to `docs/changelog.md`.
 
 ## Now
 
-- [ ] First setup by a stranger on Windows 11 through the agent path, with the doctor output attached to the report. Until then Windows is documented, not proven: the file locks and process groups have Windows branches, but nobody has run them there.
+- [x] First setup on Windows 11 through the agent path, with measurements. Done 2026-09-13: `docs/windows-setup-notes.md` is the field report, two crashes it found are fixed, and a 1,556-file library was scanned and enriched there.
+- [ ] Run `python vault.py setup` itself on Windows 11, start to finish, on a machine that has none of the tools. The one-command path is built from that field report but has only been run on Linux, so the winget installs, the PATH repair and the venv creation are reasoned, not measured.
 - [ ] First setup on Arch-based Linux on a machine that is not the author's, same evidence.
 - [ ] A Windows service or scheduled-task equivalent of `src.services`, which today writes systemd units only. Until then Windows users run `python vault.py scan --watch` in a terminal.
 
