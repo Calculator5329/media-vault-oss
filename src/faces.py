@@ -1,4 +1,4 @@
-"""Fresh, offline face observations over verified photos. No inferred names.
+"""Fresh, offline face observations over verified photos and video samples. No inferred names.
 
 Detection and embeddings are model suggestions. Per-photo checkpoints distinguish
 success with no detected face from failed decoding. Observations carry immutable
@@ -54,48 +54,130 @@ class OpenCVFaces:
         return sorted(result,key=lambda f:tuple(f['box']))
 
 
-def index(import_database,output,backend,seconds=600,limit=1000,reader=read_image):
+def read_frame(path):
+    """Decode one retained video sample (a small JPEG under .catalog/video-samples) as RGB."""
+    from PIL import Image
+    with Image.open(path) as image:
+        return image.convert('RGB')
+
+
+def video_frames(catalog_directory):
+    """Retained samples per video, and which videos the sampler has finished with.
+
+Returns ``(frames, sampled)``. ``frames`` maps a video's content hash to its samples
+(frame id, timestamp, file). ``sampled`` holds every content hash the frame sampler
+has recorded a final result for, including videos that yielded no frames. A video
+absent from ``sampled`` has not been sampled yet, or failed with an error the sampler
+will retry, so the face pass leaves it for a later run instead of marking it done."""
+    directory=Path(catalog_directory);path=directory/'frames.db'
+    if not path.is_file():return {},set()
+    with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as conn:
+        tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {'settings','frame_facts','frame_work'}<=tables:return {},set()
+        current=conn.execute("SELECT value FROM settings WHERE key='frames_current'").fetchone()
+        compatible=conn.execute("SELECT value FROM settings WHERE key='frames_compatible'").fetchone()
+        models=json.loads(compatible[0]) if compatible else ([current[0]] if current else [])
+        if not models:return {},set()
+        marks=','.join('?' for _ in models)
+        # ValueError is the one failure family src/frames.py retries; every other outcome is final.
+        sampled={r[0] for r in conn.execute('SELECT content_hash,error FROM frame_work WHERE sampler IN ('+marks+')',models) if r[1] is None or r[1]!='ValueError'}
+        frames=defaultdict(list)
+        for r in conn.execute('SELECT frame_id,content_hash,timestamp,filename FROM frame_facts WHERE sampler IN ('+marks+') ORDER BY content_hash,timestamp,frame_id',models):
+            frames[r[1]].append({'frame_id':r[0],'timestamp':float(r[2]),'filename':r[3],'path':directory/'video-samples'/r[3]})
+    return frames,sampled
+
+
+def representative_faces(faces,threshold=0.5):
+    """One face per distinct person seen across a video's samples.
+
+The same face recurs sample after sample; publishing every one would flood the review
+groups with near-identical singletons, because a group admits one face per content.
+Greedy: strongest detection first, then drop any later face whose embedding matches a
+kept one at or above ``threshold``. Still model output, never an identity."""
+    import numpy as np
+    kept=[]
+    for face in sorted(faces,key=lambda f:(-float(f['score']),f['frame']['timestamp'],tuple(f['box']))):
+        vector=unit(face['vector']);array=np.asarray(vector,dtype=np.float32)
+        if any(float(np.asarray(k['vector'],dtype=np.float32)@array)>=threshold for k in kept):continue
+        kept.append({**face,'vector':vector})
+    return kept
+
+
+def index(import_database,output,backend,seconds=600,limit=1000,reader=read_image,frame_reader=read_frame):
+    """Detect faces on every verified photo, then on the retained samples of every video the
+frame sampler has finished with. Video observations carry the frame and timestamp in their
+provenance span; photo observations are unchanged, so their identities are stable."""
     source=Path(import_database).resolve(strict=True)
     if Path(output).resolve()==source:raise ValueError('Face store must be separate')
     with closing(sqlite3.connect(source.as_uri()+'?mode=ro',uri=True)) as conn:
         conn.row_factory=sqlite3.Row
         roots=json.loads(conn.execute("SELECT value FROM settings WHERE key='sources'").fetchone()[0])
-        candidates=defaultdict(list)
-        for row in conn.execute("SELECT * FROM occurrences WHERE present=1 AND kind='photo' AND content_hash IS NOT NULL ORDER BY member!='',source,offset"):
-            candidates[row['content_hash']].append(dict(row))
+        photos=defaultdict(list);videos=defaultdict(list)
+        for row in conn.execute("SELECT * FROM occurrences WHERE present=1 AND kind IN ('photo','video') AND content_hash IS NOT NULL ORDER BY member!='',source,offset"):
+            (photos if row['kind']=='photo' else videos)[row['content_hash']].append(dict(row))
+    frames,sampled=video_frames(Path(output).resolve().parent)
     start=time.monotonic();processed=0
     with database(output,roots) as conn:
         create_fact_table(conn,'face_observations',{'face_id':'TEXT PRIMARY KEY','content_hash':'TEXT NOT NULL','model':'TEXT NOT NULL','box_json':'TEXT NOT NULL','vector_json':'TEXT NOT NULL'})
         conn.execute('CREATE TABLE IF NOT EXISTS face_work(content_hash TEXT,model TEXT,status TEXT,face_count INTEGER,error TEXT,derived_at TEXT,PRIMARY KEY(content_hash,model))')
-        done={r[0] for r in conn.execute('SELECT content_hash FROM face_work WHERE model=?',(backend.identity,))}
-        for digest,rows in candidates.items():
-            if processed>=limit or time.monotonic()-start>=seconds:break
-            if digest in done:continue
+        if 'kind' not in {r[1] for r in conn.execute('PRAGMA table_info(face_work)')}:
+            conn.execute('ALTER TABLE face_work ADD COLUMN kind TEXT')  # rows from before video support were photo work
+        work=list(conn.execute('SELECT content_hash,kind FROM face_work WHERE model=?',(backend.identity,)))
+        # A file scanned as a photo that later proved to be a video (see src/media_types.py) is not done as a video.
+        done_photos={h for h,k in work if k in (None,'photo')};done_videos={h for h,k in work if k=='video'}
+        def observation(digest,row,face,span,extractor='opencv-yunet-sface'):
+            box=face['box'];vector=unit(face['vector']);score=float(face['score'])
+            if len(box)!=4 or not all(isinstance(v,(float,int)) and 0<=v<=1 for v in box) or not (box[0]<box[2] and box[1]<box[3]) or not 0<=score<=1:raise ValueError('Invalid face observation')
+            geometry=json.dumps(box,separators=(',',':'))
+            # Photos hash exactly as before frames were added; frames add the frame id so two samples with one box stay distinct.
+            identity=hashlib.sha256((digest+span.get('frame_id','')+backend.identity+geometry).encode()).hexdigest()
+            return {'face_id':identity,'content_hash':digest,'model':backend.identity,'box_json':geometry,'vector_json':json.dumps(vector),
+                'source_path':row['source'],'source_span':json.dumps({'member':row['member'],'offset':row['offset'],**span,'box':box}),
+                'extractor':extractor,'extractor_version':VERSION,'confidence':score,'derived_at':now(),'tier':'personal'}
+        def record(digest,observations,error,kind):
+            nonlocal processed
+            with conn:
+                conn.execute('DELETE FROM face_observations WHERE content_hash=? AND model=?',(digest,backend.identity))
+                for fact in observations:insert_fact(conn,'face_observations',fact)
+                conn.execute('INSERT OR REPLACE INTO face_work(content_hash,model,status,face_count,error,derived_at,kind) VALUES(?,?,?,?,?,?,?)',(digest,backend.identity,'error' if error else 'complete',len(observations),error,now(),kind))
+            (done_photos if kind=='photo' else done_videos).add(digest);processed+=1
+            if processed%100==0:print(json.dumps({'phase':'face-observations',**summary(conn,backend.identity),'processed_this_run':processed}),flush=True)
+        def exhausted():return processed>=limit or time.monotonic()-start>=seconds
+        for digest,rows in photos.items():
+            if exhausted():break
+            if digest in done_photos:continue
             image=None;error='NoReadableSource';observations=[]
             for row in rows:
                 try:image=reader(row);break
                 except (OSError,ValueError,RuntimeError,StopIteration,zipfile.BadZipFile) as exc:error=type(exc).__name__
             if image is not None:
                 try:
-                    for face in backend.detect(image):
-                        box=face['box'];vector=unit(face['vector']);score=float(face['score'])
-                        if len(box)!=4 or not all(isinstance(v,(float,int)) and 0<=v<=1 for v in box) or not (box[0]<box[2] and box[1]<box[3]) or not 0<=score<=1:raise ValueError('Invalid face observation')
-                        geometry=json.dumps(box,separators=(',',':'))
-                        identity=hashlib.sha256((digest+backend.identity+geometry).encode()).hexdigest()
-                        observations.append({'face_id':identity,'content_hash':digest,'model':backend.identity,'box_json':geometry,'vector_json':json.dumps(vector),
-                            'source_path':row['source'],'source_span':json.dumps({'member':row['member'],'offset':row['offset'],'box':box}),
-                            'extractor':'opencv-yunet-sface','extractor_version':VERSION,'confidence':score,'derived_at':now(),'tier':'personal'})
+                    observations=[observation(digest,row,face,{}) for face in backend.detect(image)]
                     error=None
                 except Exception as exc:
                     error=type(exc).__name__;observations=[]
                 finally:
                     if hasattr(image,'close'):image.close()
-            with conn:
-                for observation in observations:insert_fact(conn,'face_observations',observation)
-                conn.execute('INSERT INTO face_work VALUES(?,?,?,?,?,?)',(digest,backend.identity,'error' if error else 'complete',len(observations),error,now()))
-            done.add(digest);processed+=1
-            if processed%100==0:print(json.dumps({'phase':'face-observations',**summary(conn,backend.identity),'processed_this_run':processed}),flush=True)
-        return {**summary(conn,backend.identity),'processed_this_run':processed,'candidates':len(candidates),'remaining':len(set(candidates)-done),'model':backend.identity}
+            record(digest,observations,error,'photo')
+        for digest,rows in videos.items():
+            if exhausted():break
+            if digest in done_videos or digest not in sampled:continue
+            row=rows[0];observations=[];error=None
+            try:
+                found=[]
+                for frame in frames.get(digest,()):
+                    image=frame_reader(frame['path'])
+                    try:found.extend({**face,'frame':frame} for face in backend.detect(image))
+                    finally:
+                        if hasattr(image,'close'):image.close()
+                observations=[observation(digest,row,face,{'frame_id':face['frame']['frame_id'],'timestamp':face['frame']['timestamp'],'frame_file':face['frame']['filename']},'opencv-yunet-sface-frames')
+                              for face in representative_faces(found)]
+            except Exception as exc:
+                error=type(exc).__name__;observations=[]
+            record(digest,observations,error,'video')
+        remaining=(set(photos)-done_photos)|(set(videos)-done_videos)
+        return {**summary(conn,backend.identity),'processed_this_run':processed,'candidates':len(photos)+len(videos),'processed_videos':len(set(videos)&done_videos),
+                'remaining':len(remaining),'model':backend.identity}
 
 
 def summary(conn,model):

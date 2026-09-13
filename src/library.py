@@ -315,10 +315,10 @@ proposal stays apart. Members of a confirmed stack never reappear in proposals."
         return members
 
     def _face_rows(self):
-        """Current-model face observations for verified photos, cached until the store grows."""
+        """Current-model face observations for verified photos and video samples, cached until the store grows."""
         path=self.catalog_directory/'faces.db'
         if not path.is_file():return None
-        current={i['content_hash']:i for i in self.items if i['content_hash'] and i['kind']=='photo'}
+        current={i['content_hash']:i for i in self.items if i['content_hash'] and i['kind'] in ('photo','video')}
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as conn:
             row=conn.execute("SELECT value FROM settings WHERE key='face_groups_current'").fetchone()
             if not row:return None
@@ -326,9 +326,15 @@ proposal stays apart. Members of a confirmed stack never reappear in proposals."
             count=conn.execute('SELECT COUNT(*) FROM face_observations WHERE model=?',(model,)).fetchone()[0]
             cache=getattr(self,'_face_cache',None)
             if cache and cache['key']==(model,count,len(current)):return cache
-            processed=sum(r[0] in current for r in conn.execute('SELECT content_hash FROM face_work WHERE model=?',(model,)))
+            columns={r[1] for r in conn.execute('PRAGMA table_info(face_work)')}
+            work=conn.execute('SELECT content_hash,kind FROM face_work WHERE model=?' if 'kind' in columns else 'SELECT content_hash,NULL FROM face_work WHERE model=?',(model,))
+            # Work done under the wrong kind (a video that passed as a photo until verified) does not count as processed.
+            processed=sum(h in current and (kind or 'photo')==current[h]['kind'] for h,kind in work)
             from .faces import unit
-            rows=[{'face_id':r[0],'content_hash':r[1],'vector':unit(json.loads(r[2])),'box':json.loads(r[3]),'item_id':current[r[1]]['id']} for r in conn.execute('SELECT face_id,content_hash,vector_json,box_json FROM face_observations WHERE model=?',(model,)) if r[1] in current]
+            def sample_time(span):
+                data=json.loads(span) if span else {}
+                return data.get('timestamp') if 'frame_file' in data else None
+            rows=[{'face_id':r[0],'content_hash':r[1],'vector':unit(json.loads(r[2])),'box':json.loads(r[3]),'item_id':current[r[1]]['id'],'timestamp':sample_time(r[4])} for r in conn.execute('SELECT face_id,content_hash,vector_json,box_json,source_span FROM face_observations WHERE model=?',(model,)) if r[1] in current]
         self._face_cache={'key':(model,count,len(current)),'model':model,'rows':rows,'processed':processed,'groups':{}}
         return self._face_cache
 
@@ -364,37 +370,44 @@ named person's confirmed faces carries that person as a hint, never a label."""
             groups.append({'id':group['id'],'faces':[{'face_id':f,'content_hash':by_id[f]['content_hash'],'item_id':by_id[f]['item_id']} for f in ids],'looks_like':hint})
         groups.sort(key=lambda g:(-len(g['faces']),g['id']))
         return {'groups':groups,'ready':True,'sensitivity':sensitivity,'threshold':SENSITIVITY[sensitivity],
-                'processed_photos':cache['processed'],'candidate_photos':sum(i['kind']=='photo' and bool(i['content_hash']) for i in self.items),
+                'processed_photos':cache['processed'],'candidate_photos':sum(i['kind'] in ('photo','video') and bool(i['content_hash']) for i in self.items),
                 'faces':len(rows),'confirmed':len(confirmed),'ignored':len(hidden),'single_groups':sum(len(g['faces'])==1 for g in groups)}
 
     def photo_faces(self,key):
-        """Every detected face on one photo with its owner state: named, ignored or still unreviewed."""
+        """Every detected face on one photo or video with its owner state: named, ignored or still unreviewed."""
         item=self.by_id[key];cache=self._face_rows()
         if cache is None or not item['content_hash']:return {'faces':[],'ready':cache is not None}
         state=self.organization.read();faces=[]
         for row in cache['rows']:
             if row['content_hash']!=item['content_hash']:continue
             owner=state['faces'].get(row['face_id']);person=state['people'].get(owner['person']) if owner else None
-            faces.append({'face_id':row['face_id'],'content_hash':row['content_hash'],'person':person,'ignored':row['face_id'] in state['ignored_faces'],'cover':bool(person) and state['covers'].get(person['id'])==row['face_id'],'box':row.get('box')})
+            faces.append({'face_id':row['face_id'],'content_hash':row['content_hash'],'person':person,'ignored':row['face_id'] in state['ignored_faces'],'cover':bool(person) and state['covers'].get(person['id'])==row['face_id'],'box':row.get('box'),'timestamp':row.get('timestamp')})
         return {'faces':faces,'ready':True}
 
     def face_preview(self,face_id):
         path=self.catalog_directory/'faces.db'
         if not path.is_file():raise FileNotFoundError()
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as conn:
-            row=conn.execute('SELECT content_hash,box_json FROM face_observations WHERE face_id=?',(face_id,)).fetchone()
+            row=conn.execute('SELECT content_hash,box_json,source_span FROM face_observations WHERE face_id=?',(face_id,)).fetchone()
         if row is None or row[0] not in self.by_content:raise FileNotFoundError()
-        face={'item_id':self.by_content[row[0]]['id'],'box':json.loads(row[1])}
+        span=json.loads(row[2]) if row[2] else {}
+        face={'item_id':self.by_content[row[0]]['id'],'box':json.loads(row[1]),'sample':span.get('frame_file')}
         target=self.thumbnails/('face-v2-'+face_id+'.jpg')
         if target.is_file():return target
         from .vision import read_image
         self.thumbnails.mkdir(parents=True,exist_ok=True)
         with THUMBNAIL_WORKERS:
-            sources=self.sources_by_id[face['item_id']]
-            for row in sources:
-                try:image=read_image(row);break
-                except (OSError,ValueError,RuntimeError,StopIteration,zipfile.BadZipFile):continue
-            else:raise FileNotFoundError()
+            if face['sample']:
+                # A video face was detected on a retained sample, so crop that sample instead of decoding the video.
+                sample=self.catalog_directory/'video-samples'/face['sample']
+                if not sample.is_file():raise FileNotFoundError()
+                from PIL import Image
+                with Image.open(sample) as opened:image=opened.convert('RGB')
+            else:
+                for row in self.sources_by_id[face['item_id']]:
+                    try:image=read_image(row);break
+                    except (OSError,ValueError,RuntimeError,StopIteration,zipfile.BadZipFile):continue
+                else:raise FileNotFoundError()
             try:
                 # Square crop with breathing room around the detector box, so chips show a face rather than a tight mask.
                 x0,y0,x1,y1=face['box'];w,h=image.size
@@ -492,7 +505,7 @@ named person's confirmed faces carries that person as a hint, never a label."""
             own=faces.get(person['id'],[]);cover=state['covers'].get(person['id'])
             groups.append({**person,'count':len(mine),'cover':mine[0]['id'] if mine else None,'face':cover if cover in own else (own or [None])[0],'cover_face':cover if cover in own else None,'confirmed_faces':len(own),'hidden':person['id'] in state['hidden_people']})
         return {'people':sorted(groups,key=lambda p:p['name'].casefold()),
-                'untagged':sum(i['kind']=='photo' and not state['tags'].get(i['content_hash']) for i in self.items),
+                'untagged':sum(i['kind'] in ('photo','video') and not state['tags'].get(i['content_hash']) for i in self.items),
                 'automatic_grouping':self._face_rows() is not None}
 
     def places(self):
@@ -734,7 +747,7 @@ named person's confirmed faces carries that person as a hint, never a label."""
             elif kind=='stacks' and not (member and member['top'] and member['collapse']):continue
             elif not stack and member and member['collapse'] and not member['top']:continue
             people=[state['people'][p] for p in sorted(state['tags'].get(item['content_hash'],set())) if p in state['people']]
-            if person=='untagged' and (people or item['kind']!='photo'):continue
+            if person=='untagged' and (people or item['kind'] not in ('photo','video')):continue
             if person and person!='untagged' and not any(p['id']==person for p in people):continue
             key=self.place_key(item)
             if chosen and (not item['day'] or not chosen['after']<=item['day']<=chosen['before'] or (chosen['place'] and key not in chosen['place'].split(',')) or item['content_hash'] in state['trip_exclusions'].get(trip,set())):continue
