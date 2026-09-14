@@ -21,6 +21,12 @@ fixes it.
 
 The rest of this page is the same work by hand, and what to check when a step misbehaves.
 
+`python vault.py setup --options "D:\Pictures"` prints the offer without doing anything:
+the machine's GPU, RAM and free disk, what works with no model, what the default download
+adds, and each extra flag with a recommendation (`--vision` when an NVIDIA GPU is present)
+and a suggested command line. `--json` returns the same as one document.
+
+
 ## 1. Command-line tools
 
 Media Vault shells out to four programs and treats everything they print as data.

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Media Vault setup: one command from a fresh clone to a viewer full of photos.
 
+    python scripts/setup.py --options "D:\\Pictures"
     python scripts/setup.py "D:\\Pictures"
 
-That is the whole thing. It installs the command-line tools, builds the virtual
+The first line measures the machine and prints the offer: what works with no models,
+what the default download adds, and which extras fit this hardware (image search by
+description is recommended when an NVIDIA GPU is present). The second line is the
+whole setup. It installs the command-line tools, builds the virtual
 environment, writes vault.config.json for the folder you named, downloads the small
 models, scans the library, runs enrichment until nothing is left, labels places, and
 prints the viewer URL. Every step measures first and skips itself when it is already
@@ -19,6 +23,7 @@ stopped.
     --state-dir P       where the catalog goes (default .catalog)
     --models-dir P      where models go (default models)
     --repair-path       only look for installed tools PATH cannot see, record them, exit
+    --options           only print what this machine gets by default and what it could add
     --json              print one JSON line per step as well as the human report
 
 Nothing here uploads anything. The network is used for package installs and model
@@ -40,6 +45,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import doctor  # noqa: E402  sibling module, standard library only
 import tools  # noqa: E402  sibling module, standard library only
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +62,82 @@ MODEL_SETS = {'standard': ['--faces', '--gazetteer', '--whisper'], 'all': ['--al
 # Downloaded bytes, so the report can say what a step is about to cost.
 MODEL_SIZES = {'--faces': '37 MB', '--gazetteer': '13 MB', '--whisper': '461 MB',
                '--vision': '1.4 GB', '--all': '1.9 GB'}
+
+
+# The offer, for `--options`: what works with no model at all, what the default download adds,
+# and the extras a person has to ask for. CLAUDE.md tells the agent to read this back before
+# running setup, so the wording here is what the person hears.
+OUT_OF_THE_BOX = ['timeline by day with a year and month scrubber',
+                  'every date with its evidence (EXIF, container, file time) and the camera, size and path',
+                  'one entry per photo even when copies live in several folders',
+                  'search by name, date, camera and file name',
+                  'favorites, hiding, buckets, saved trips and date fixes, kept in one corrections file',
+                  'an offline world map with your photos on it',
+                  'archive quality audit and "fill the gaps" proposals',
+                  'similar shots and bursts stacked, video preview frames']
+DEFAULT_MODELS = [('people', 'faces in photos and videos, grouped for you to name', '--faces'),
+                  ('places', 'GPS turned into town, region and country, with suggested trips', '--gazetteer'),
+                  ('transcripts', 'the words spoken in videos, searchable', '--whisper'),
+                  ('text', 'the words in photos, searchable (Tesseract, no download)', None)]
+
+
+def offer(hardware, folders):
+    """What to propose on this machine. Pure: hardware comes from doctor.hardware_facts."""
+    gpu = hardware.get('gpu')
+    vram = round(gpu['memory_total_mb'] / 1024, 1) if gpu else None
+    free = hardware.get('disk_free_gb')
+    if gpu:
+        why = f'{gpu["name"]} with {vram} GB VRAM found; indexing runs on it and is fast'
+    else:
+        why = 'no NVIDIA GPU found; it works on the CPU but indexing a big library takes hours'
+    extras = [
+        {'flag': '--vision', 'name': 'image search by description', 'recommended': bool(gpu), 'why': why,
+         'adds': 'type "dog on a beach" and get matching photos, find similar images, jump to video moments',
+         'cost': f'{MODEL_SIZES["--vision"]} model plus torch, about 4 GB on disk'},
+        {'flag': '--serve', 'name': 'leave the viewer running when setup ends', 'recommended': False,
+         'why': 'handy for a first look; otherwise python vault.py starts it any time', 'adds': '', 'cost': ''},
+        {'flag': '--no-enrich', 'name': 'stop after the scan', 'recommended': False,
+         'why': 'a quick first look at a very large library; run python vault.py setup again to finish',
+         'adds': '', 'cost': ''},
+        {'flag': '--models none', 'name': 'skip every model download', 'recommended': False,
+         'why': 'the out-of-the-box list still works; people, places and transcripts do not', 'adds': '', 'cost': ''}]
+    standard_mb = sum(int(MODEL_SIZES[flag].split()[0]) for _, _, flag in DEFAULT_MODELS if flag)
+    warnings = []
+    if free is not None and free < 10:
+        warnings.append(f'only {free} GB free where the catalog will go; previews and models need room')
+    if gpu and vram is not None and vram < 4:
+        warnings.append(f'{vram} GB VRAM is tight for image search; it may fall back to the CPU')
+    command = ['python', 'vault.py', 'setup', *[f'"{folder}"' for folder in folders]]
+    command += [item['flag'] for item in extras if item['recommended']]
+    return {'hardware': hardware, 'out_of_the_box': OUT_OF_THE_BOX,
+            'default': [{'name': name, 'adds': adds, 'flag': flag} for name, adds, flag in DEFAULT_MODELS],
+            'default_download_mb': standard_mb, 'extras': extras, 'warnings': warnings,
+            'suggested_command': ' '.join(command)}
+
+
+def print_offer(found):
+    hardware = found['hardware']
+    gpu = hardware.get('gpu')
+    machine = (f'{gpu["name"]}, {round(gpu["memory_total_mb"] / 1024, 1)} GB VRAM' if gpu else 'no NVIDIA GPU')
+    machine += f'; {hardware.get("ram_gb")} GB RAM; {hardware.get("cpu_count")} CPUs; '
+    machine += f'{hardware.get("disk_free_gb")} GB free for the catalog'
+    print(f'Media Vault on this machine: {machine}\n')
+    print('Works with no model at all:')
+    for line in found['out_of_the_box']:
+        print(f'  {line}')
+    print(f'\nIncluded by default ({found["default_download_mb"]} MB of downloads):')
+    for item in found['default']:
+        print(f'  {item["name"]:<12} {item["adds"]}')
+    print('\nOptional, ask before adding:')
+    for item in found['extras']:
+        mark = 'recommended' if item['recommended'] else '           '
+        print(f'  {mark}  {item["flag"]:<14} {item["name"]}')
+        for key in ('adds', 'cost', 'why'):
+            if item[key]:
+                print(f'{"":30}{item[key]}')
+    for warning in found['warnings']:
+        print(f'\nWarning: {warning}')
+    print(f'\nSuggested command:\n  {found["suggested_command"]}')
 
 
 class Stop(Exception):
@@ -388,8 +470,18 @@ def main(argv=None):
     parser.add_argument('--models-dir')
     parser.add_argument('--repair-path', action='store_true',
                         help='only find installed tools PATH cannot see, record them, and exit')
+    parser.add_argument('--options', action='store_true',
+                        help='only print what this machine gets by default and what it could add')
     parser.add_argument('--json', action='store_true', dest='as_json')
     args = parser.parse_args(argv)
+
+    if args.options:
+        found = offer(doctor.hardware_facts(ROOT / (args.state_dir or '.catalog')), args.folders or ['D:\\Pictures'])
+        if args.as_json:
+            print(json.dumps(found))
+        else:
+            print_offer(found)
+        return 0
 
     if args.repair_path:
         found = tools.discover()

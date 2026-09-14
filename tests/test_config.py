@@ -70,6 +70,23 @@ class SetupConfigTests(unittest.TestCase):
         setup = load_setup_module()
         self.assertEqual(set(setup.CONFIG_DEFAULTS) | {'sources'}, set(config.DEFAULTS))
 
+    def test_the_offer_recommends_vision_only_when_a_gpu_is_present(self):
+        """CLAUDE.md has the agent read this offer back before running setup, so the GPU decides."""
+        setup = load_setup_module()
+        gpu = {'gpu': {'name': 'RTX 4070', 'memory_total_mb': 12288, 'memory_free_mb': 12000},
+               'ram_gb': 32.0, 'cpu_count': 16, 'disk_free_gb': 200.0, 'disk_path': '.catalog'}
+        with_gpu = setup.offer(gpu, ['D:\\Pictures'])
+        without = setup.offer({**gpu, 'gpu': None}, ['D:\\Pictures'])
+        vision = {item['flag']: item for item in with_gpu['extras']}['--vision']
+        self.assertTrue(vision['recommended'])
+        self.assertIn('RTX 4070', vision['why'])
+        self.assertEqual(with_gpu['suggested_command'], 'python vault.py setup "D:\\Pictures" --vision')
+        self.assertFalse({item['flag']: item for item in without['extras']}['--vision']['recommended'])
+        self.assertEqual(without['suggested_command'], 'python vault.py setup "D:\\Pictures"')
+        self.assertEqual(with_gpu['default_download_mb'], 37 + 13 + 461)
+        self.assertEqual(setup.offer({**gpu, 'disk_free_gb': 3.0}, ['x'])['warnings'],
+                         ['only 3.0 GB free where the catalog will go; previews and models need room'])
+
 
 if __name__ == '__main__':
     unittest.main()

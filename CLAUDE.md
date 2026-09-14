@@ -12,28 +12,48 @@ first, what to do when a step stops, and the lines you must not cross.
 
 ## The procedure
 
-**One command does all of it.** Ask the person which folder holds their photos and videos,
-then run it from the repository root:
+**Measure, offer, run.** Ask the person which folder holds their photos and videos, then
+print the offer for this machine:
 
 ```
-python vault.py setup "D:\Pictures"
+python vault.py setup --options "D:\Pictures"
+```
+
+It reads the GPU, RAM and free disk and prints three things: what works with no model at
+all, what the default download adds (people, places, transcripts, text; about 511 MB), and
+the extras, with `--vision` marked recommended when an NVIDIA GPU is present. Read that back
+to the person in a few lines, in this shape:
+
+> Out of the box you get the timeline, dates with their evidence, duplicates across folders,
+> search, buckets, trips, the offline map and the quality audit. The default setup adds
+> people, places and video transcripts (511 MB of models). This machine has an RTX 4070, so
+> I'd also add image search by description ("dog on a beach"), about 4 GB. Want that, or
+> just the default?
+
+Always offer; never silently include or skip `--vision`. If they say "whatever you
+recommend", run the `Suggested command` line the offer printed. Then run it from the
+repository root:
+
+```
+python vault.py setup "D:\Pictures" --vision
 ```
 
 Any Python 3 starts it; it builds the right environment itself. It installs the
-command-line tools, creates `.venv`, writes `vault.config.json`, downloads the small
-models, scans the library, runs enrichment until every stage is empty, labels places and
-ends with the doctor's verdict and the viewer URL. It prints a numbered step per phase,
-skips anything already done, and is safe to run again after a failure, a reboot, or a
-Ctrl+C: every step measures before it acts.
+command-line tools, creates `.venv`, writes `vault.config.json`, downloads the models,
+scans the library, runs enrichment until every stage is empty, labels places and ends with
+the doctor's verdict and the viewer URL. It prints a numbered step per phase, skips anything
+already done, and is safe to run again after a failure, a reboot, or a Ctrl+C: every step
+measures before it acts.
 
-Useful flags, all optional:
+The flags, all optional and all listed by `--options`:
 
 - `--vision` also installs torch and SigLIP2 so photos can be searched by description.
-  Several GB; offer it when the doctor reports an NVIDIA GPU, and say the size first.
+  About 4 GB on disk; fast on an NVIDIA GPU, hours on a CPU for a large library.
 - `--models none` skips the model downloads entirely (catalog, timeline and search still work).
 - `--no-enrich` stops after the scan, for a quick first look at a huge library.
 - `--serve` leaves the viewer running at the end instead of just printing the URL.
-- `--json` adds one JSON line per step, which is the easiest thing for you to report from.
+- `--json` adds one JSON line per step (and one JSON document for `--options`), which is
+  the easiest thing for you to report from.
 
 A long library scan and the enrichment pass both take real time. Run the command in the
 background and report progress from its output rather than waiting silently.

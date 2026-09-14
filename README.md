@@ -28,14 +28,18 @@ and prints the viewer URL. It skips whatever is already done, so running it agai
 failure or a reboot carries on from there. Windows 11 and Arch-based Linux (CachyOS) are the
 tested targets.
 
+`python vault.py setup --options "D:\Pictures"` first prints what this machine gets: the
+features that need no model, the default download, and the extras, with image search by
+description marked recommended when an NVIDIA GPU is present.
+
 Or open the clone in Claude Code (or any coding agent that reads `CLAUDE.md` or
 `AGENTS.md`) and say:
 
 > Set up Media Vault for the photos in D:\Pictures.
 
-The agent runs that same command, watches it, answers the one or two questions it can raise
-(a password for the Linux package install, whether you want the several-GB image search
-model), and hands you the URL.
+The agent prints that offer, reads it back to you in a few lines, runs the setup command with
+whatever you picked, watches it, answers the one or two questions it can raise (a password
+for the Linux package install), and hands you the URL.
 
 ## Set it up by hand
 

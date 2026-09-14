@@ -4,6 +4,11 @@
 
 One command sets the whole thing up, and the Windows field report's rough edges are gone.
 
+- `python vault.py setup --options "D:\Pictures"` prints the offer for this machine: what
+  works with no model, what the default 511 MB download adds, and the extras, with `--vision`
+  marked recommended when `nvidia-smi` reports a GPU, plus a suggested command line.
+  `CLAUDE.md` now has the agent read that offer back and ask before running setup, so image
+  search is always offered on a GPU machine and never silently added or skipped.
 - `python vault.py setup "D:\Pictures"` runs the whole path: command-line tools, `.venv`,
   `vault.config.json`, the small models, the scan, enrichment to completion, place names, and
   the doctor's verdict with the viewer URL. Any Python 3 starts it. Every step measures before
