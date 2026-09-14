@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import sys
 import threading
 import uuid
 from urllib.parse import parse_qs, urlsplit
@@ -155,6 +156,13 @@ class Viewer:
                 'sources':[{'path':str(self.source/relative)}],
                 'status':'Original embedded metadata snapshot; content verification may still be pending.'}
 
+    def reveal(self,key):
+        """Show this file in the desktop file manager. Only a server-known path is ever opened;
+        the request carries an item id, never a path."""
+        rows=getattr(self,'sources_by_id',{}).get(key)
+        path=Path(rows[0]['source']) if rows else self.source/self.paths[key][0]
+        return reveal_path(path)
+
     def _select(self, query='', kind='all', year='', after='', before='', near=''):
         if kind not in ('all','photo','video','unknown','undated','duplicates','errors','located'):
             raise ValueError('Unknown filter')
@@ -267,6 +275,17 @@ class Viewer:
             raise RuntimeError('Preview timed out') from exc
 
 
+def reveal_path(path):
+    """Select the file in the platform file manager where that is possible, else open its folder."""
+    path=Path(path)
+    if not path.exists():raise FileNotFoundError(str(path))
+    if sys.platform.startswith('win'):command=['explorer','/select,'+str(path)]
+    elif sys.platform=='darwin':command=['open','-R',str(path)]
+    else:command=['xdg-open',str(path.parent)]
+    subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    return {'folder':str(path.parent),'selected':command[0]!='xdg-open'}
+
+
 def handler(viewer, port):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -320,6 +339,17 @@ def handler(viewer, port):
                     if not re.fullmatch(r'[a-f0-9]{64}',key):raise ValueError()
                     self.send(200,json.dumps(current.video_status(key,start=True)).encode())
                 except (ValueError,KeyError):self.send(400,b'{"error":"Unknown video"}')
+                return
+            if self.path=='/api/reveal':
+                try:
+                    length=int(self.headers.get('Content-Length','0'))
+                    if not 0<length<=4096 or self.headers.get('Content-Type')!='application/json':raise ValueError()
+                    value=json.loads(self.rfile.read(length))
+                    key=value.get('id') if isinstance(value,dict) else None
+                    if not isinstance(key,str) or not re.fullmatch(r'[a-f0-9]{64}',key) or key not in current.paths:raise ValueError()
+                except (ValueError,TypeError):self.send(400,b'{"error":"Unknown file"}');return
+                try:self.send(200,json.dumps(current.reveal(key)).encode())
+                except OSError:self.send(400,b'{"error":"The file is not available right now"}')
                 return
             if self.path=='/api/export-buckets' and hasattr(current,'organize'):
                 try:

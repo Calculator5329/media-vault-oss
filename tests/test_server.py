@@ -107,6 +107,40 @@ class ViewerTests(unittest.TestCase):
         instance.do_GET()
         return response[0]
 
+    def post(self,path,body,content_type='application/json',origin='http://127.0.0.1:8770'):
+        klass=server.handler(self.viewer,8770)
+        instance=object.__new__(klass)
+        raw=body if isinstance(body,bytes) else json.dumps(body).encode()
+        instance.path=path;instance.headers={'Host':'127.0.0.1:8770','Origin':origin,'Content-Length':str(len(raw)),'Content-Type':content_type}
+        instance.rfile=io.BytesIO(raw)
+        response=[]
+        instance.send=lambda status,body,mime='application/json',cache=False:response.append((status,body,mime))
+        instance.do_POST()
+        return response[0]
+
+    def test_reveal_opens_the_folder_of_a_known_file_and_nothing_else(self):
+        """The folder icon in the detail panel asks the desktop to show the file; the request names an item, never a path."""
+        item=next(i for i in self.viewer.items if i['name']=='a.jpg')
+        with patch.object(server.subprocess,'Popen') as popen:
+            status,body,_=self.post('/api/reveal',{'id':item['id']})
+            self.assertEqual(status,200);result=json.loads(body)
+            self.assertEqual(result['folder'],str(self.source))
+            command=popen.call_args.args[0]
+            self.assertIn(command[-1],(str(self.source),str(self.source/'a.jpg'),'/select,'+str(self.source/'a.jpg')))
+            self.assertEqual(popen.call_count,1)
+        with patch.object(server.subprocess,'Popen') as popen:
+            self.assertEqual(self.post('/api/reveal',{'id':'0'*64})[0],400)
+            self.assertEqual(self.post('/api/reveal',{'id':'../../etc'})[0],400)
+            self.assertEqual(self.post('/api/reveal',{'path':str(self.source/'a.jpg')})[0],400)
+            self.assertEqual(self.post('/api/reveal',{'id':item['id']},origin='https://evil.example')[0],403)
+            self.assertEqual(popen.call_count,0)
+        (self.source/'a.jpg').rename(self.source/'gone.jpg')
+        try:
+            with patch.object(server.subprocess,'Popen') as popen:
+                self.assertEqual(self.post('/api/reveal',{'id':item['id']})[0],400);self.assertEqual(popen.call_count,0)
+        finally:(self.source/'gone.jpg').rename(self.source/'a.jpg')
+        self.assertEqual((self.source/'a.jpg').read_bytes(),b'ABC')
+
     def test_map_library_and_basemap_are_served_locally_and_nothing_comes_from_the_network(self):
         status,body,mime=self.request('/vendor/leaflet/leaflet.js')
         self.assertEqual((status,mime),(200,'text/javascript; charset=utf-8'));self.assertIn(b'leaflet',body[:2000])

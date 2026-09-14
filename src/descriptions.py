@@ -28,6 +28,8 @@ def parse(raw):
     for obj in value['objects']:
         if not isinstance(obj,dict) or set(obj)!={'name','color'} or any(not isinstance(v,str) or not 1<=len(v)<=80 for v in obj.values()):raise ValueError('Invalid object description')
         obj['name']=obj['name'].strip().casefold();obj['color']=obj['color'].strip().casefold()
+    # A model that lists one object nine times has seen one object; keep the first mention of each name and color.
+    seen=set();value['objects']=[o for o in value['objects'] if (o['name'],o['color']) not in seen and not seen.add((o['name'],o['color']))]
     return value
 
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-14 (detail panel)
+
+The panel on the right of an open photo or video is rebuilt so a person can read it.
+
+- Facts read as sentences: `Aug 25, 2026, 7:45 PM UTC` with the source underneath in
+  plain words (`Google Photos record, time taken`, `Camera (EXIF), original capture time`)
+  and a `timezone unknown` note where that applies. A `Change` link opens the capture-date
+  choice; the choice is a radio list, one card per source, and only appears on its own when
+  the sources disagree or a date is missing. Keywords, caption, title and rating are shown
+  when a file carries them.
+- Location on disk is one row: a folder icon that reveals the file in the system file
+  manager (`POST /api/reveal`, loopback only, the file must be in the catalog), the path
+  shortened with an ellipsis in the middle and the full path on hover, and a copy icon.
+- Favorite is a star whose button keeps its size in both states; Hide sits beside it.
+  Tiles show the star too.
+- Add to bucket is a checklist dropdown under a bucket icon: tick a bucket to add, untick
+  to remove, `New bucket…` at the bottom. Chips for the buckets a file is in stay under it.
+- Similar shots: the panel shows the stack as a thumbnail strip, marks which one the grid
+  shows, and offers `Shown in the grid`, `Separate all N` and `Open as a list`. Clicking a
+  thumbnail opens that shot in place instead of leaving for a filtered grid.
+- Transcript is laid out like a video-site transcript: time on the left, text on the right,
+  each row seeks the video.
+- AI description shows the caption and one chip per distinct object. The model repeats
+  an object once per instance and miscounts, so nine `black crutch` entries collapse to
+  one chip; new descriptions are deduplicated when they are written.
+- Detected text hides words the reader scored under 0.5 or that are not at least two
+  letters or digits, says how many fragments were hidden, and keeps the full read under
+  `Where each fact came from`.
+- `Where each fact came from` replaces the raw dump: one card per source (Google Photos
+  record, camera EXIF, sidecar, AI description, detected text, files) with labelled rows,
+  the raw record behind a fold, and the JSON behind another.
+- The dropdown focus ring is a single accent border; the sort and year menus no longer
+  show a double highlight.
+- The `Media Vault` mark is a button back to the photo grid, and a search from any view
+  runs on the photo grid instead of the view it was typed in. `Saved highlights` is a
+  button in the Buckets toolbar.
+
 ## 2026-09-14
 
 Stacks are always collapsed, the Similar view is gone, and metadata comes from more places.

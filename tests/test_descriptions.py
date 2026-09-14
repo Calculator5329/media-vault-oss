@@ -16,6 +16,8 @@ class DescriptionTests(unittest.TestCase):
         self.assertTrue(descriptions.matches(scene('blue'),'blue car'))
         self.assertEqual(descriptions.parse('```json\n'+json.dumps(scene())+'\n```'),scene())
         with self.assertRaises(ValueError):descriptions.parse(json.dumps({'caption':'hello','category':'secret trait','objects':[]}))
+        repeated={**scene(),'objects':[{'name':'Crutch','color':'black'}]*9+[{'name':'crutch','color':'grey'}]}
+        self.assertEqual(descriptions.parse(json.dumps(repeated))['objects'],[{'name':'crutch','color':'black'},{'name':'crutch','color':'grey'}])
 
     def test_checkpoint_search_category_and_provenance(self):
         f=test_library.LibraryTests();f.setUp();v=f.build();photo=v.search(query='new.jpg')['items'][0]
