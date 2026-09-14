@@ -21,6 +21,11 @@ TOOL_TIMEOUT_S = 120
 PHOTO_EXTS = frozenset(
     ".jpg .jpeg .png .gif .bmp .tif .tiff .webp .heic .heif".split()
 )
+# Camera raw files. ImageMagick reads their EXIF through libraw where it is installed; without it the
+# file is still inventoried and shown, with a metadata error and no preview, rather than skipped.
+RAW_EXTS = frozenset(
+    ".dng .cr2 .cr3 .nef .nrw .arw .srf .sr2 .orf .rw2 .raf .pef .srw .3fr .x3f".split()
+)
 VIDEO_EXTS = frozenset(
     ".mp4 .mov .m4v .avi .mkv .webm .mpg .mpeg .wmv .3gp .m2ts .mts".split()
 )
@@ -32,7 +37,7 @@ class ToolError(RuntimeError):
 
 def kind_for(path):
     ext = path.suffix.lower()
-    if ext in PHOTO_EXTS:
+    if ext in PHOTO_EXTS or ext in RAW_EXTS:
         return "photo"
     if ext in VIDEO_EXTS:
         return "video"

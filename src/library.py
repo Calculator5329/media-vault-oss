@@ -103,7 +103,7 @@ class Library(Viewer):
             key=hashlib.sha256(('zip:'+digest).encode()).hexdigest()
             item={'id':key,'name':PurePosixPath(row['member']).name,'kind':row['kind'],
                   'extension':PurePosixPath(row['member']).suffix.lower(),'size':row['size'],
-                  'date':None,'day':None,'location':None,'camera':None,'width':None,'height':None,
+                  'date':None,'day':None,'location':None,'camera':None,'width':None,'height':None,'keywords':[],'caption':None,'title':None,'rating':None,
                   'duration':None,'metadata_error':False,'duplicate':len(sources)>1,
                   'source_count':len(sources),'content_hash':digest,'source_type':'zip'}
             self.zip_sources[key]=sources
@@ -280,11 +280,12 @@ class Library(Viewer):
         return self._hash_cache
 
     def stacks(self):
-        """Near-duplicate and burst stacks: the owner's confirmed stacks first, then current proposals.
+        """Near-duplicate and burst stacks: the owner's recorded stacks first, then current proposals.
 
-A proposal is a view over hashes and times; it hides nothing durably. Confirming it or
-choosing a top records a stack; "keep separate" records the stack id so the same
-proposal stays apart. Members of a confirmed stack never reappear in proposals."""
+Every stack collapses to its top in the grid. A stack is a view over hashes and times and
+hides nothing durably: fanning one out shows every member, choosing a top records the
+stack, and "separate" records the stack id so the same proposal stays apart. Members of a
+recorded stack never reappear in proposals."""
         cache=self._hash_rows();state=self.organization.read();result=[];claimed=set()
         for stack in state['stacks'].values():
             contents=[c for c in stack['contents'] if c in self.by_content and self.by_content[c]['kind']=='photo']
@@ -292,18 +293,40 @@ proposal stays apart. Members of a confirmed stack never reappear in proposals."
             top=stack['top'] if stack['top'] in contents else contents[0]
             claimed.update(contents)
             result.append({'id':stack['id'],'contents':contents,'top':top,'confirmed':True,'day':self.by_content[top]['day']})
-        for stack in (cache['proposals'] if cache else []):
+        for stack in (cache['proposals'] if cache else [])+self._raw_pairs():
             if stack['id'] in state['separated'] or any(c in claimed for c in stack['contents']):continue
+            claimed.update(stack['contents'])
             result.append({**stack,'confirmed':False})
         for stack in result:
-            # Only a time signal earns an automatic collapse: undated proposals (forms, screenshots) wait for a verdict.
-            stack['collapse']=stack['confirmed'] or stack['day'] is not None
+            stack['collapse']=True  # always: separating a stack is one click, and nothing is hidden for good
             stack['count']=len(stack['contents'])
             stack['items']=[{'id':self.by_content[c]['id'],'content_hash':c,'name':self.by_content[c]['name'],'day':self.by_content[c]['day'],'date':self.by_content[c]['date'],'width':self.by_content[c]['width'],'height':self.by_content[c]['height'],'top':c==stack['top']} for c in stack['contents']]
         result.sort(key=lambda s:(not s['confirmed'],s['day'] is None,s['day'] or '',s['id']))
         return {'stacks':result,'confirmed':sum(s['confirmed'] for s in result),'proposed':sum(not s['confirmed'] for s in result),
                 'hashed':cache['processed'] if cache else 0,'ready':cache is not None,
-                'meaning':'Photos within a few bits of each other on the same day, or looser matches shot within ninety seconds. Dated proposals collapse in the grid; undated ones (forms, screenshots) wait for your verdict. Stacks are a view: nothing is deleted or hidden for good. Keep separate records your verdict; choosing a top confirms the stack.'}
+                'meaning':'Photos within a few bits of each other on the same day, or looser matches shot within ninety seconds. Every stack collapses to its top in the grid; the badge fans it out. Stacks are a view: nothing is deleted or hidden for good. Separate keeps the shots apart; choosing a top records the stack.'}
+
+    def _raw_pairs(self):
+        """A camera's raw file and the JPEG it wrote beside it, as one stack with the JPEG on top.
+
+The pair is by folder and stem (DSC_0042.NEF next to DSC_0042.JPG), so the grid shows the
+JPEG, the badge fans out to the raw, and Separate keeps them apart like any other stack."""
+        from .probe import RAW_EXTS
+        from .similar import stack_id
+        groups=defaultdict(dict)
+        for item in self.items:
+            if item['kind']!='photo' or not item['content_hash'] or item['id'] not in self.paths:continue
+            # Every folder a copy lives in counts: the JPEG may sit beside the raw in only one of them.
+            locations=[Path(self.paths[item['id']][0])]+[Path(r['source']) for r in self.sources_by_id.get(item['id'],()) if not r['member']]
+            for location in locations:
+                groups[(str(location.parent),location.stem.casefold())][item['content_hash']]=item
+        pairs={}
+        for members in groups.values():
+            raws=[i for i in members.values() if i['extension'] in RAW_EXTS];jpegs=[i for i in members.values() if i['extension'] not in RAW_EXTS]
+            if not raws or not jpegs:continue
+            contents=[i['content_hash'] for i in jpegs+raws]
+            pairs[stack_id(contents)]={'id':stack_id(contents),'contents':contents,'top':jpegs[0]['content_hash'],'day':jpegs[0]['day'],'raw_pair':True}
+        return list(pairs.values())
 
     def _stack_membership(self):
         cache=self._hash_rows();key=(cache['key'] if cache else None,self.organization.version())
@@ -778,7 +801,7 @@ per-item string work dominated search time when it ran on every request."""
             digest=item['content_hash'];key=self.place_key(item);day=item['day']
             people=' '.join(state['people'][p]['name'] for p in state['tags'].get(digest,()) if p in state['people'])
             trip_names=' '.join(t['name'] for t in trips if day and t['after']<=day<=t['before'] and (not t['place'] or t['place']==key) and digest not in state['trip_exclusions'].get(t['id'],set())) if day else ''
-            texts[item['id']]=f"{item['name']} {item['camera'] or ''} {day or ''} {state['places'].get(key,'')} {geo_text.get(key,'')} {trip_names} {people} {' '.join(buckets.get(digest,()))}".casefold()
+            texts[item['id']]=f"{item['name']} {item['camera'] or ''} {' '.join(item.get('keywords') or [])} {item.get('caption') or ''} {item.get('title') or ''} {day or ''} {state['places'].get(key,'')} {geo_text.get(key,'')} {trip_names} {people} {' '.join(buckets.get(digest,()))}".casefold()
         self._text_cache=(state,texts)
         return texts
 
@@ -912,6 +935,11 @@ of running a text search. AI object tags are model output and say so."""
                 item['location']={**value,'source':value.get('source',source)}
             elif fact['attribute']=='raw_embedded':
                 item['camera']=item['camera'] or (value.get('exif') or {}).get('Model')
+                embedded=value.get('embedded') or {}
+                if embedded.get('keywords') and not item.get('keywords'):item['keywords']=embedded['keywords']
+                for key in ('caption','title'):
+                    if embedded.get(key) and not item.get(key):item[key]=embedded[key]['value']
+                if embedded.get('rating') is not None and item.get('rating') is None:item['rating']=embedded['rating']
                 item['width']=item['width'] or value.get('width')
                 item['height']=item['height'] or value.get('height')
         from .dates import evidence

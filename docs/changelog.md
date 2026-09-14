@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-09-14
+
+Stacks are always collapsed, the Similar view is gone, and metadata comes from more places.
+
+- Google Takeout sidecars are read when they sit beside the photos, not only inside the zip:
+  `IMG.jpg.json`, `.supplemental-metadata.json`, Takeout's truncated names and its `(1)`
+  placement. One sidecar to one file or nothing; ambiguous and orphaned ones are counted.
+- XMP and IPTC, embedded or in a `.xmp` sidecar: keywords (`dc:subject`, Lightroom's
+  hierarchical subjects, IPTC 2:25), caption, title, rating, and `photoshop:DateCreated` or
+  `xmp:CreateDate` as the capture date when EXIF has none. Keywords and captions are
+  searchable and shown in the detail panel, labelled as written by an editing tool. A
+  sidecar's fields win over the embedded packet, field by field. `src/embedded.py`.
+- PNG `Creation Time` gives screenshots a date.
+- Videos: Apple's `com.apple.quicktime.creationdate` (local time with its offset) is read
+  before the UTC `creation_time`, and an old camera's `date` tag after it. Offsets written
+  without a colon parse.
+- Camera raw files (DNG, NEF, CR2, CR3, ARW, ORF, RW2, RAF, PEF and more) are inventoried
+  as photos instead of skipped. A raw beside the JPEG with the same stem stacks under it,
+  so the grid shows the JPEG and the badge fans out to the raw; Separate splits them.
+
+- Every near-duplicate or burst stack collapses to its top in the grid, dated or not. The
+  `⧉ 3` badge fans the stack out in place: click a shot to make it the top, Separate to keep
+  the shots apart, Open to browse the stack alone. The detail panel offers the same two
+  actions. There is no longer a proposed/confirmed distinction to learn, no review queue and
+  no "Similar" entry in the rail; the "Similar stacks" filter remains for sweeping them.
+  Choosing a top still records the stack in `corrections/organization.jsonl` and Separate
+  still records the verdict, so nothing changed in the file format.
+
 ## 2026-09-13, later
 
 One command sets the whole thing up, and the Windows field report's rough edges are gone.

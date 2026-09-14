@@ -117,6 +117,17 @@ class MetadataTests(unittest.TestCase):
         self.assertIsNone(catalog.timestamp('2023-02-29T12:30:40Z'))
         self.assertIsNone(catalog.timestamp('2024-02-29T25:30:40Z'))
         self.assertEqual(catalog.timestamp('2024:02:29 12:30:40', '+99:99', True), '2024-02-29T12:30:40')
+        self.assertEqual(catalog.timestamp('2023-08-20T12:00:00-0500'), '2023-08-20T12:00:00-05:00', "Apple's creationdate offset has no colon")
+
+    def test_video_dates_prefer_the_local_apple_stamp_then_creation_time_then_the_old_date_tag(self):
+        data = {'format': {'tags': {'creation_time': '2023-08-20T17:00:00.000000Z', 'com.apple.quicktime.creationdate': '2023-08-20T12:00:00-0500'}}, 'streams': []}
+        with patch.object(catalog.probe, 'ffprobe_json', return_value=data), patch.object(catalog.probe, 'video_summary', return_value={}):
+            result = catalog.inspect(Path('clip.mov'))
+        self.assertEqual((result['date']['value'], result['date']['source']), ('2023-08-20T12:00:00-05:00', 'ffprobe:format.tags.com.apple.quicktime.creationdate'))
+        data['format']['tags'] = {'date': '2019-05-04T10:00:00+0200'}
+        with patch.object(catalog.probe, 'ffprobe_json', return_value=data), patch.object(catalog.probe, 'video_summary', return_value={}):
+            result = catalog.inspect(Path('clip.3gp'))
+        self.assertEqual(result['date']['source'], 'ffprobe:format.tags.date')
 
     def test_video_location_and_missing_hemispheres(self):
         data = {'format': {'tags': {'location': '+41.5000-087.6000+020.0/'}}}
@@ -126,7 +137,7 @@ class MetadataTests(unittest.TestCase):
         self.assertIsNone(catalog.gps({'GPSLatitude': '41,0,0', 'GPSLongitude': '87,0,0'}))
 
     def test_photo_empty_metadata_differs_from_probe_failure(self):
-        with patch.object(catalog.probe, '_run', return_value='100\n200\n'):
+        with patch.object(catalog.probe, '_run', return_value='100\n200\n'), patch.object(catalog, 'describe_embedded', return_value=None):
             result = catalog.inspect(Path('test.jpg'))
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['exif'], {})

@@ -21,7 +21,7 @@ from .kit import create_fact_table, insert_fact
 from .portable import on_external_root
 
 VERSION = 'catalog-1'
-PHOTO_EXTS = probe.PHOTO_EXTS | {'.avif', '.jpg_large', '.png_dip_staged'}
+PHOTO_EXTS = probe.PHOTO_EXTS | probe.RAW_EXTS | {'.avif', '.jpg_large', '.png_dip_staged'}
 
 
 def kind(path):
@@ -42,8 +42,11 @@ def timestamp(raw, offset=None, exif=False):
             hours, minutes = map(int, offset[1:].split(':'))
             if hours <= 14 and minutes < 60 and (hours < 14 or minutes == 0):
                 value += offset
-    elif not re.fullmatch(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?', value):
-        return None
+    else:
+        # Apple's creationdate and some Android builds write the offset without a colon.
+        value = re.sub(r'([+-]\d{2})(\d{2})$', r'\1:\2', value)
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?', value):
+            return None
     try:
         return datetime.fromisoformat(value.replace('Z', '+00:00')).isoformat()
     except ValueError:
@@ -76,6 +79,11 @@ def video_location(data):
     return None
 
 
+def describe_embedded(path):
+    from .embedded import describe
+    return describe(path)
+
+
 def inspect(path):
     """Return raw metadata plus selected facts and explicit extraction errors."""
     result = {'extractor': VERSION, 'derived_at': datetime.now(timezone.utc).isoformat(), 'errors': [], 'date': None, 'location': None}
@@ -101,6 +109,16 @@ def inspect(path):
                 result['location'] = {'lat': point[0], 'lon': point[1], 'source': 'exif:GPSLatitude/GPSLongitude'}
         except (probe.ToolError, ValueError, IndexError) as exc:
             result['errors'].append({'stage': 'photo-metadata', 'type': type(exc).__name__})
+        try:
+            # Keywords, captions, ratings and editor dates: XMP, IPTC, an .xmp sidecar, PNG creation time.
+            embedded = describe_embedded(path)
+            if embedded:
+                result['embedded'] = embedded
+                created = embedded.get('created')
+                if created and not result['date']:
+                    result['date'] = {**created, 'meaning': 'capture'}
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            result['errors'].append({'stage': 'embedded-metadata', 'type': type(exc).__name__})
     elif kind(path) == 'video':
         try:
             data = probe.ffprobe_json(path)
@@ -108,10 +126,15 @@ def inspect(path):
             result['video'] = probe.video_summary(data)
             scopes = [('format', (data.get('format') or {}).get('tags') or {})]
             scopes += [(f'streams[{i}]', s.get('tags') or {}) for i, s in enumerate(data.get('streams') or [])]
-            for scope, tags in scopes:
-                parsed = timestamp(tags.get('creation_time'))
-                if parsed:
-                    result['date'] = {'value': parsed, 'source': f'ffprobe:{scope}.tags.creation_time', 'meaning': 'container creation', 'timezone_known': datetime.fromisoformat(parsed).tzinfo is not None}
+            # Apple writes the local time with its offset in creationdate and UTC in creation_time; older
+            # cameras and some Android builds write only a 'date' tag. First readable claim wins.
+            for name in ('com.apple.quicktime.creationdate', 'creation_time', 'date'):
+                for scope, tags in scopes:
+                    parsed = timestamp(tags.get(name))
+                    if parsed:
+                        result['date'] = {'value': parsed, 'source': f'ffprobe:{scope}.tags.{name}', 'meaning': 'container creation', 'timezone_known': datetime.fromisoformat(parsed).tzinfo is not None}
+                        break
+                if result['date']:
                     break
             result['location'] = video_location(data)
         except (probe.ToolError, ValueError, TypeError) as exc:
@@ -276,6 +299,12 @@ def publish_facts(source, conn):
             model = data.get('exif', {}).get('Model')
             if model:
                 values.append(('camera_model', model, 'exif:Model', 'mv.catalog.metadata', 0.95, derived_at))
+            embedded = data.get('embedded') or {}
+            if embedded.get('keywords'):
+                values.append(('keywords', embedded['keywords'], 'xmp:dc:subject/iptc:Keywords', 'mv.catalog.metadata', 0.95, derived_at))
+            for key in ('title', 'caption'):
+                if embedded.get(key):
+                    values.append((key, embedded[key]['value'], embedded[key]['source'], 'mv.catalog.metadata', 0.95, derived_at))
             if row['content_hash']:
                 # Hash values are cached only after matching before/after stat checks.
                 values.append(('content_hash', row['content_hash'], 'file:bytes:sha256', 'mv.catalog.hash', 1.0, row['hash_derived_at']))

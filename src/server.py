@@ -53,6 +53,10 @@ class Viewer:
                     json_extract(metadata,'$.date') AS date,
                     json_extract(metadata,'$.location') AS location,
                     json_extract(metadata,'$.exif.Model') AS camera,
+                    json_extract(metadata,'$.embedded.keywords') AS keywords,
+                    json_extract(metadata,'$.embedded.caption.value') AS caption,
+                    json_extract(metadata,'$.embedded.title.value') AS title,
+                    json_extract(metadata,'$.embedded.rating') AS rating,
                     json_extract(metadata,'$.errors') AS errors,
                     json_extract(metadata,'$.width') AS width,
                     json_extract(metadata,'$.height') AS height,
@@ -82,6 +86,7 @@ class Viewer:
                     'size': row['size'], 'date': date, 'day': value[:10] if value else None,
                     'location': json.loads(row['location']) if row['location'] else None,
                     'camera': row['camera'], 'width': row['width'], 'height': row['height'],
+                    'keywords': json.loads(row['keywords']) if row['keywords'] else [], 'caption': row['caption'], 'title': row['title'], 'rating': row['rating'],
                     'duration': row['duration'], 'metadata_error': bool(row['error'] or (row['errors'] and json.loads(row['errors']))),
                     'duplicate': bool(row['content_hash'] and hash_counts[row['content_hash']]>1)}
             self.items.append(item)
@@ -188,7 +193,7 @@ class Viewer:
                 dlat=lat2-lat1;dlon=math.radians(location['lon']-point[1])
                 distance=6371*2*math.asin(min(1,math.sqrt(math.sin(dlat/2)**2+math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2)))
                 if distance>point[2]: continue
-            searchable = f"{item['name']} {item['camera'] or ''} {item['day'] or ''}".casefold()
+            searchable = f"{item['name']} {item['camera'] or ''} {item['day'] or ''} {' '.join(item.get('keywords') or [])} {item.get('caption') or ''} {item.get('title') or ''}".casefold()
             if not all(term in searchable for term in terms): continue
             selected.append(item)
         return selected

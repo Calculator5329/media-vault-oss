@@ -9,6 +9,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
 import math
+import os
+import re
 from pathlib import Path, PurePosixPath
 import sqlite3
 import zipfile
@@ -18,6 +20,7 @@ from .imports import database, now
 from .kit import create_fact_table, insert_fact
 
 VERSION = 'metadata-1'
+SUPPLEMENT = '.supplemental-metadata'  # Takeout's sidecar suffix, often truncated to fit a name limit
 
 
 def sidecar_values(data):
@@ -44,6 +47,32 @@ def sidecar_values(data):
             yield 'location', {'lat':lat, 'lon':lon, 'field':key}
     if isinstance(data.get('description'), str) and data['description']:
         yield 'description', data['description']
+
+
+def sidecar_names(json_name, title):
+    """The media file names a loose Google Photos sidecar could describe.
+
+Takeout writes ``IMG_1.jpg.json`` or ``IMG_1.jpg.supplemental-metadata.json``, truncates
+long names (``...jpg.supplemental-metad.json``), and moves a duplicate's ``(1)`` after the
+extension (``IMG_1.jpg(1).json`` for ``IMG_1(1).jpg``). The ``title`` field holds the
+original name, so it is a candidate too, with the same ``(n)`` treatment."""
+    names=set()
+    base=json_name[:-5] if json_name.lower().endswith('.json') else json_name
+    copy=re.fullmatch(r'(.*)(\(\d+\))',base)
+    if copy:base,tag=copy.groups()
+    else:tag=''
+    for cut in [i for i,ch in enumerate(base) if ch=='.'][::-1]:
+        if SUPPLEMENT.startswith(base[cut:]):
+            base=base[:cut];break
+    candidates=[base]
+    if isinstance(title,str) and title and '/' not in title and '\\' not in title and title not in ('.','..'):candidates.append(title)
+    for name in candidates:
+        if not name:continue
+        if tag:
+            stem,dot,ext=name.rpartition('.')
+            names.add(f'{stem}{tag}.{ext}' if dot else name+tag)
+        else:names.add(name)
+    return names
 
 
 def refresh(import_database, export_root, output):
@@ -106,6 +135,34 @@ def refresh(import_database, export_root, output):
             add(row,row['source'],{'kind':'embedded','recovery_of':raw.get('extractor','catalog'),
                 'basis':'detected_avif'},recovered['extractor'],derived,values,recovered['extractor_version'])
             counts['embedded_occurrences_recovered'] += 1
+    # Loose sidecars: an extracted Takeout, or any folder where IMG_1.jpg.json sits beside IMG_1.jpg.
+    by_folder=defaultdict(dict)
+    for row in rows:
+        if not row['member']:by_folder[str(Path(row['source']).parent)][Path(row['source']).name]=row
+    for folder,named in sorted(by_folder.items()):
+        try:entries=sorted((e for e in os.scandir(folder) if e.name.lower().endswith('.json') and e.is_file(follow_symlinks=False)),key=lambda e:e.name)
+        except OSError:continue
+        for entry in entries:
+            try:
+                if entry.stat().st_size>MAX_JSON:
+                    counts['sidecar_oversized'] += 1
+                    continue
+                data=json.loads(Path(entry.path).read_bytes())
+                if not isinstance(data,dict) or 'photoTakenTime' not in data:continue
+                matches={name:named[name] for name in sidecar_names(entry.name,data.get('title')) if name in named}
+                if len(matches)!=1:
+                    counts['sidecar_ambiguous' if matches else 'sidecar_unmatched'] += 1
+                    continue
+                row=next(iter(matches.values()))
+                if not row['content_hash']:
+                    counts['sidecar_waiting_for_hash'] += 1
+                    continue
+                values=list(sidecar_values(data))
+                json.dumps(values,allow_nan=False)
+                add(row,entry.path,{'sidecar':entry.name},'google-photos-sidecar',derived,values)
+                counts['sidecar_attached'] += 1
+            except (ValueError,UnicodeError,OSError):
+                counts['sidecar_unreadable'] += 1
     # Include JSON-only parts too; their sidecars can point to media in other parts.
     for path in sorted(export_root.iterdir()) if export_root is not None else ():
         if path.is_symlink() or not path.is_file() or not path.name.startswith(('takeout-', 'Photos-')) or path.suffix.lower() != '.zip':

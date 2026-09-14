@@ -119,6 +119,20 @@ suggested visits you can review, name and save as trips.
 
 ### Every file, with its evidence
 
+What the vault reads, per format:
+
+| Where | What it takes |
+|---|---|
+| JPEG, TIFF, HEIC, WebP | EXIF date with its offset, GPS, camera model, dimensions |
+| XMP and IPTC, embedded or in a `.xmp` sidecar | keywords (Lightroom, darktable, digiKam, Photoshop), caption, title, rating, the editor's date when EXIF has none |
+| PNG | the `Creation Time` chunk a screenshot tool writes |
+| MP4, MOV, 3GP and the rest | Apple's local `creationdate`, then `creation_time`, then an old camera's `date` tag; ISO 6709 location |
+| Camera raw (DNG, NEF, CR2, ARW, ORF, RAF and more) | inventoried and shown; EXIF where ImageMagick has libraw; stacked under the JPEG shot beside it |
+| Google Takeout | the JSON sidecars, in the zip or extracted beside the photos, including the truncated and `(1)` names Takeout produces |
+| File names | `IMG_20240115_123456`, `2024-01-15`, epoch stamps, as inferences with a stated confidence |
+
+Every claim keeps the field it came from and its timezone, or the fact that it had none.
+
 Each date shows where it came from (EXIF, container creation time, file modification) and
 whether the timezone is known. The detail panel lists the camera, the raw coordinates, the
 file size and the path on disk, offers favorite, hide and bucket actions, and shows the

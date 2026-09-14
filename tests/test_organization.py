@@ -190,7 +190,24 @@ class StackReviewTests(unittest.TestCase):
         rebuilt=Library(f.f.catalog,f.f.db,organization=library.organization.path)
         self.assertEqual(rebuilt.stacks()['confirmed'],1,'confirmed stacks survive a rebuild')
 
-    def test_undated_proposals_wait_for_a_verdict_before_collapsing(self):
+    def test_a_raw_file_stacks_under_the_jpeg_shot_beside_it(self):
+        from src import catalog
+        f=test_library.LibraryTests();f.setUp()
+        for name,payload in (('DSC_0042.JPG',b'jpeg bytes 42'),('DSC_0042.NEF',b'raw bytes 42'),('DSC_0043.NEF',b'raw bytes 43 alone')):
+            (f.f.source/name).write_bytes(payload)
+        source,conn=catalog.connect(f.f.source,f.f.catalog);catalog.inventory(source,conn);conn.close()
+        library=f.build()
+        pair=next(s for s in library.stacks()['stacks'] if s.get('raw_pair'))
+        names={i['name']:i['top'] for i in pair['items']}
+        self.assertEqual(names,{'DSC_0042.JPG':True,'DSC_0042.NEF':False})
+        shown={i['name'] for i in library.search()['items']}
+        self.assertIn('DSC_0042.JPG',shown);self.assertNotIn('DSC_0042.NEF',shown)
+        self.assertIn('DSC_0043.NEF',shown,'a raw file with no JPEG beside it is an ordinary photo')
+        library.organize('unstack',{'stack':pair['id']})
+        self.assertIn('DSC_0042.NEF',{i['name'] for i in library.search()['items']})
+
+    def test_undated_proposals_collapse_too_and_separate_with_one_verdict(self):
+        """Every stack is a view, so undated near-duplicates (forms, screenshots) collapse like the rest."""
         from src import similar
         f=test_library.LibraryTests();f.setUp();library=f.build()
         photos=[i for i in library.items if i['kind']=='photo' and i['content_hash']]
@@ -202,8 +219,8 @@ class StackReviewTests(unittest.TestCase):
         similar.index(f.f.db,f.f.root/'similar.db',reader=lambda row:row['content_hash'],hasher=lambda digest:'ff00ff00ff00ff00' if digest in undated else '0000000000000000')
         review=library.stacks()
         proposal=next(s for s in review['stacks'] if sorted(s['contents'])==sorted(undated))
-        self.assertFalse(proposal['collapse'])
-        self.assertEqual(library.search()['total'],len(library.items),'undated proposals never hide a photo')
-        self.assertEqual(library.search(kind='stacks')['total'],0)
-        library.organize('stack',{'stack':proposal['id'],'contents':proposal['contents'],'top':proposal['top']})
-        self.assertEqual(library.search()['total'],len(library.items)-1,'a confirmed stack collapses whatever its dates')
+        self.assertTrue(proposal['collapse'])
+        self.assertEqual(library.search()['total'],len(library.items)-1,'an undated proposal collapses to its top like any other')
+        self.assertEqual([i['content_hash'] for i in library.search(kind='stacks')['items']],[proposal['top']])
+        library.organize('unstack',{'stack':proposal['id']})
+        self.assertEqual(library.search()['total'],len(library.items),'separate brings every member back')

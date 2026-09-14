@@ -54,6 +54,29 @@ class MetadataTests(unittest.TestCase):
             for row in facts:
                 validate_row('metadata_facts',row)
 
+    def test_loose_sidecars_beside_files_attach_including_truncated_and_copy_names(self):
+        """An extracted Takeout has IMG.jpg.json next to IMG.jpg; nobody keeps the zip."""
+        for name in ('b.jpg','b(1).jpg','c.jpg','longname_2020.jpg'):
+            (self.source/name).write_bytes(b'image-'+name.encode())
+        sidecars={'b.jpg.json':('b.jpg','1600000000'),'b.jpg(1).json':('b.jpg','1600000100'),
+                  'c.jpg.supplemental-metadata.json':('c.jpg','1600000200'),
+                  'longname_2020.jpg.supplemental-metad.json':('longname_2020.jpg','1600000300')}
+        for name,(title,stamp) in sidecars.items():
+            (self.source/name).write_text(json.dumps({'title':title,'photoTakenTime':{'timestamp':stamp},'people':[{'name':'DO NOT IMPORT'}]}))
+        (self.source/'orphan.jpg.json').write_text(json.dumps({'title':'orphan.jpg','photoTakenTime':{'timestamp':'1600000400'}}))
+        (self.source/'notes.json').write_text(json.dumps({'unrelated':True}))
+        source,conn=catalog.connect(self.source,self.catalog);catalog.inventory(source,conn);conn.close()
+        self.index()
+        result=metadata.refresh(self.imports,self.exports,self.output)
+        self.assertEqual((result['sidecar_attached'],result['sidecar_unmatched']),(2+4,1))
+        with imports.database(self.output,[self.source,self.exports]) as conn:
+            facts=[dict(r) for r in conn.execute("SELECT * FROM metadata_facts WHERE attribute='date'")]
+        by_file={json.loads(r['source_span']).get('sidecar'):json.loads(r['value_json'])['value'] for r in facts if 'sidecar' in r['source_span']}
+        self.assertEqual(by_file['b.jpg(1).json'],'2020-09-13T12:28:20+00:00')
+        self.assertEqual(sorted(by_file),sorted(sidecars))
+        self.assertNotIn('DO NOT IMPORT',json.dumps(facts))
+        self.assertEqual(metadata.sidecar_names('IMG_1.jpg(2).json','IMG_1.jpg'),{'IMG_1(2).jpg'})
+
     def test_changed_zip_does_not_replace_previously_published_metadata(self):
         self.index()
         first = metadata.refresh(self.imports,self.exports,self.output)

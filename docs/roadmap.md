@@ -19,3 +19,5 @@ Open work is a checkbox. Shipped work moves to `docs/changelog.md`.
 
 - [ ] An importer for a Google Takeout ZIP so people leaving Google Photos can bring their albums and edits along. The `exports` config key is the hook for it.
 - [ ] Sharing a read-only album with someone on the same network, opt-in, still no cloud.
+- [ ] Adding a folder to `sources` after the first scan stops with "Database belongs to different sources" (`src/imports.py`). Setup should be able to add a source and carry the existing catalog forward instead of asking for a rebuild.
+- [ ] Real raw files in the fixture corpus (a DNG at least) so the libraw path in ImageMagick is measured, not assumed; today raws are inventoried and paired by name only.
