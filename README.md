@@ -25,8 +25,14 @@ Name the folder your pictures and videos are in, nested folders and all. It inst
 command-line tools, builds the Python environment, writes the config, downloads the small
 models, scans the library, runs the AI passes until nothing is left, labels places from GPS,
 and prints the viewer URL. It skips whatever is already done, so running it again after a
-failure or a reboot carries on from there. Windows 11 and Arch-based Linux (CachyOS) are the
-tested targets.
+failure or a reboot carries on from there.
+
+The targets are Windows 11 and Arch-based Linux (CachyOS), and they are not equally proven.
+The one-command path has been run start to finish on Linux. On Windows the setup has only
+been done by hand so far, one step at a time, on a 1,560-file library; the winget installs
+and the PATH repair in the setup command are built from that run but have not been executed
+end to end there yet. `docs/windows-setup-notes.md` is the field report, including the two
+crashes it turned up and the fixes.
 
 `python vault.py setup --options "D:\Pictures"` first prints what this machine gets: the
 features that need no model, the default download, and the extras, with image search by
@@ -82,9 +88,9 @@ are resized copies in `.catalog/previews`; the originals are opened read-only an
 touched.
 
 **Corrections** are yours. Naming a person, tagging a photo, fixing a date, saving a trip or
-filling a bucket appends a line to `corrections/organization.jsonl`, keyed by content hash. Delete the
-whole `.catalog/` folder, rescan, and every correction comes back. That one file is the thing
-to back up alongside your photos.
+filling a bucket appends a line to `corrections/organization.jsonl`, keyed by content hash.
+Delete the whole `.catalog/` folder, rescan, and every correction comes back. That one file
+is the thing to back up alongside your photos.
 
 ## What you get
 
@@ -132,8 +138,9 @@ and the detail panel says when in the video each face was seen.
 ### Buckets and similar shots
 
 Buckets are your own collections, kept in the corrections file. Similar shots stacks
-near-duplicates and bursts so the grid shows one of each; the stack is a view, and nothing is
-deleted or hidden for good.
+near-duplicates and bursts so the grid shows one of each, with a `⧉ 3` badge on the one it
+shows. Click the badge and the stack fans out in place: click a shot to make it the top, or
+Separate to keep them apart. The stack is a view, and nothing is deleted or hidden for good.
 
 ### Archive quality and filling the gaps
 
@@ -193,7 +200,15 @@ scripts/setup_models.py    pinned model downloads with checksum receipts
 docs/                      setup, models, roadmap, changelog
 ```
 
-## Privacy, stated plainly
+## What it does not do
+
+There is no cloud sync, no sharing link, no account, and no editing of your originals. The
+viewer is for one person on one machine. Two gaps are known and open: Windows has no
+equivalent of the systemd units `src/services.py` writes, so a Windows machine keeps new
+files coming in by leaving `python vault.py scan --watch` in a terminal, and there is no
+importer for a Google Takeout archive yet. `docs/roadmap.md` has the rest.
+
+## Privacy
 
 - The server listens on 127.0.0.1. There is no login because there is no network exposure.
 - No telemetry, no update check, no crash reporting.
