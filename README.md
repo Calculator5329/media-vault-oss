@@ -1,11 +1,18 @@
 # Media Vault
 
+[![test](https://github.com/Calculator5329/media-vault-oss/actions/workflows/test.yml/badge.svg)](https://github.com/Calculator5329/media-vault-oss/actions/workflows/test.yml)
+
 A private photo and video library that runs on your own computer. Point it at the folders
 your pictures already live in and it builds a catalog beside them: a timeline, people,
 places, trips, buckets, similar shots and search, served as a page on localhost. Your originals
 are never moved, renamed or written to. No image ever leaves the machine.
 
-![The timeline: photos grouped by day, with a year and month scrubber on the right](docs/images/photos.png)
+![Scrolling the timeline, jumping by year, then searching "paris" and "blossom"](docs/demo.gif)
+
+Scrolling the timeline, jumping by year, then two searches: "paris" finds a place from GPS, and
+"blossom" finds a photo only by the text printed on it. The library in this clip is 26 generated
+pictures (coloured shapes, a word, a made-up date). It ran without the image search model, so
+this is the text and place search, not search by description. [MP4](docs/demo.mp4).
 
 Optional local AI adds faces, text in photos, image search by description, video transcripts
 and scene previews. Each is a model you download once and run offline. Skip any of them and
@@ -46,6 +53,41 @@ Or open the clone in Claude Code (or any coding agent that reads `CLAUDE.md` or
 The agent prints that offer, reads it back to you in a few lines, runs the setup command with
 whatever you picked, watches it, answers the one or two questions it can raise (a password
 for the Linux package install), and hands you the URL.
+
+## How an agent installs this
+
+The repo is meant to be set up by an agent reading `CLAUDE.md`. I checked that the documented path
+works from nothing: a fresh clone in an empty folder, pointed at a folder of 26 generated sample
+pictures, on CachyOS with an RTX 5070 Ti. The machine's default `python` is 3.14, which the wheels
+do not support yet; setup found `python3.13` on the PATH and built `.venv` from it.
+
+`python vault.py setup --options` came first and recommended `--vision`. I left it off because the
+disk had 15.9 GB free and vision adds about 4 GB. Then the default setup, with the pip and
+download progress cut and the long sample path shortened to `$LIB`:
+
+```
+$ python vault.py setup "$LIB"
+[1/8] command-line tools: ffmpeg, ffprobe, magick, tesseract
+    OK: ffmpeg, ffprobe, ImageMagick and Tesseract are all reachable (0.0s)
+[2/8] Python environment: .venv
+    creating .venv from ~/.local/bin/python3.13
+    OK: requirements.txt installed into .venv (35.2s)
+[3/8] configuration: vault.config.json
+    OK: 1 source folder(s), first $LIB, port 8770 (0.1s)
+[4/8] models: --faces --gazetteer --whisper (37 MB, 13 MB, 461 MB to download, once)
+    OK: downloaded and verified: faces gazetteer whisper (21.2s)
+[5/8] scan: reads every file once, hashes it, asks for its metadata
+    OK: every file is inventoried and verified (5.0s)
+[6/8] enrichment: faces, text in photos, similar shots, frames, transcripts
+    OK: every stage ran until nothing was left to process (9.7s)
+[7/8] places: GPS coordinates to place names, offline
+    OK: coordinates labelled from the GeoNames snapshot (1.2s)
+[8/8] check: the doctor decides whether this is ready
+    OK: scanned: 26 files across 1 source(s), 26 verified contents (2.5s)
+Ready. 74.8s in total.
+```
+
+No step failed. `python vault.py` then served the viewer and `/api/summary` reported 26 files.
 
 ## Set it up by hand
 
@@ -93,6 +135,8 @@ Delete the whole `.catalog/` folder, rescan, and every correction comes back. Th
 is the thing to back up alongside your photos.
 
 ## What you get
+
+![The timeline: photos grouped by day, with a year and month scrubber on the right](docs/images/photos.png)
 
 ### One search box
 
@@ -231,6 +275,11 @@ importer for a Google Takeout archive yet. `docs/roadmap.md` has the rest.
   unplugged drive never takes the catalog with it.
 - Everything under `.catalog/` and `models/` can be deleted and rebuilt. Only
   `corrections/organization.jsonl` holds anything you typed.
+
+## Thanks
+
+[@ambalene314](https://github.com/ambalene314) did the first Windows 11 setup, fixed the two
+crashes it turned up, and added faces in videos.
 
 ## License
 

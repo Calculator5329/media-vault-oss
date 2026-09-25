@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-24 (README demo, install check, CI)
+
+- `docs/demo.gif` and `docs/demo.mp4`: the timeline and two searches, recorded with Playwright
+  against 26 generated sample pictures. No real media.
+- README section "How an agent installs this", with the real output of `python vault.py setup`
+  run in a fresh clone. It finished in 74.8 s with no failed step.
+- `.github/workflows/test.yml` runs `python vault.py test` on push and pull request, with a
+  badge in the README. It has not run on GitHub yet.
+- A Thanks line for @ambalene314.
+
 ## 2026-09-14 (detail panel)
 
 The panel on the right of an open photo or video is rebuilt so a person can read it.
