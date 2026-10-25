@@ -92,7 +92,7 @@ def stack_id(contents):return hashlib.sha256('\n'.join(sorted(contents)).encode(
 
 
 def _seconds(value):
-    try:return datetime.fromisoformat(value[:19]).timestamp()
+    try:return (datetime.fromisoformat(value[:19])-datetime(1970,1,1)).total_seconds()
     except (TypeError,ValueError):return None
 
 
